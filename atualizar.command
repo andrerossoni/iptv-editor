@@ -21,12 +21,14 @@ fi
 
 echo
 echo "  Baixando as novidades…"
-# wrangler.toml e MEUS-DADOS.txt sao ignorados pelo git, entao o pull nao os toca
+# wrangler.toml e MEUS-DADOS.txt sao ignorados pelo git, entao nada disso os toca.
+# O reset garante que a atualizacao funcione mesmo se algum arquivo do codigo
+# tiver sido alterado sem querer.
 if [ -d .git ]; then
-  if ! git pull --rebase -q origin main 2>&1 | sed 's/^/    /'; then
-    printf "${A}   ! Não consegui baixar as novidades; sigo com os arquivos atuais.${N}\n"
-  else
+  if git fetch -q origin main 2>/dev/null && git reset --hard -q origin/main 2>/dev/null; then
     printf "${V}   ✓ Novidades baixadas${N}\n"
+  else
+    printf "${A}   ! Não consegui baixar as novidades; sigo com os arquivos atuais.${N}\n"
   fi
 else
   printf "${A}   ! Sem histórico do Git aqui; sigo com os arquivos atuais.${N}\n"
