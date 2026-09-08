@@ -45,12 +45,30 @@
     <!-- Pastas -->
     <aside class="sidebar">
       <div class="side-head">
+        <label class="chk" title="Selecionar todas as pastas à vista">
+          <input type="checkbox" id="cat-sel-all">
+        </label>
         <span>Pastas</span>
         <button id="btn-new-cat" class="mini" title="Criar pasta">+ Nova</button>
       </div>
       <div class="side-search">
         <input type="search" id="cat-search" placeholder="Filtrar pastas…">
       </div>
+
+      <div class="cat-bulk" id="cat-bulk" hidden>
+        <div class="cat-bulk-info" id="cat-bulk-info"></div>
+        <div class="cat-bulk-grid">
+          <button data-cact="hide">🚫 Ocultar</button>
+          <button data-cact="show">👁 Mostrar</button>
+          <button data-cact="rename">✏️ Renomear</button>
+          <button data-cact="merge">🔗 Mesclar</button>
+          <button data-cact="moveto">📤 Esvaziar em…</button>
+          <button data-cact="top">⬆ Para o topo</button>
+          <button data-cact="delete" class="danger">🗑 Excluir</button>
+          <button data-cact="none" class="ghost">Limpar</button>
+        </div>
+      </div>
+
       <ul class="cat-list" id="cat-list"></ul>
       <div class="side-foot muted" id="side-foot"></div>
     </aside>

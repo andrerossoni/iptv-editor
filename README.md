@@ -178,8 +178,25 @@ https://SEU-ENDEREÇO.workers.dev/xmltv.php?username=USER&password=SENHA
 - **+ Nova** cria uma pasta.
 - **Duplo clique** renomeia.
 - **Arraste** uma pasta para mudar a ordem em que ela aparece no player.
-- **⋯** abre o menu: renomear, ocultar, selecionar tudo, esvaziar ou excluir.
+- **⋯** abre o menu de uma pasta só: renomear, ocultar, selecionar tudo, esvaziar ou excluir.
 - Pasta **oculta** some da lista publicada, mas continua aqui para você reverter depois.
+
+**Várias pastas de uma vez**
+
+Marque a caixinha ao lado de cada pasta. **Shift+clique** pega um intervalo inteiro,
+e a caixinha no topo marca todas que estiverem à vista (respeitando o filtro de busca).
+Com pastas marcadas aparece esta barra:
+
+| Botão | O que faz |
+|---|---|
+| **🚫 Ocultar** / **👁 Mostrar** | tira ou devolve as pastas da lista publicada |
+| **✏️ Renomear** | localizar/substituir, prefixo e sufixo em todos os nomes de uma vez |
+| **🔗 Mesclar** | junta tudo numa pasta só — ideal para reunir GLOBO CAPITAL, SUDESTE, SUL… em um "GLOBO" |
+| **📤 Esvaziar em…** | manda o conteúdo para outra pasta, mantendo as pastas vazias |
+| **⬆ Para o topo** | leva as pastas selecionadas para o começo da lista |
+| **🗑 Excluir** | remove as pastas; o conteúdo vai para "Sem pasta" e nada é perdido |
+
+Arrastar uma pasta marcada leva todas as marcadas junto.
 
 **Itens** (lista da direita)
 

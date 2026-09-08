@@ -27,6 +27,9 @@ let curCat = 'all';
 let view = [];                                    // indices visiveis no momento
 let selected = new Set();
 let lastClicked = -1;
+let selCats = new Set();      // pastas marcadas para acao em massa
+let lastCatClicked = -1;
+let dragCats = false;
 let dirty = false;
 
 /* ------------------------------------------------------------------ helpers */
@@ -210,11 +213,24 @@ function renderCats() {
   bindCatDrop(all, null);
   ul.append(all);
 
+  const visiveis = [];  // o que esta a vista, para o shift funcionar com filtro
+
   catsOf(kind).forEach((c, i) => {
     if (filter && !c.name.toLowerCase().includes(filter)) return;
-    const li = el('li', (curCat === c.id ? 'active ' : '') + (c.hidden ? 'hidden-cat' : ''));
+    const pos = visiveis.length;
+    visiveis.push(c.id);
+
+    const li = el('li', (curCat === c.id ? 'active ' : '') +
+                        (selCats.has(c.id) ? 'selcat ' : '') +
+                        (c.hidden ? 'hidden-cat' : ''));
     li.draggable = true;
     li.dataset.index = i;
+
+    const cb = el('input', 'ccheck');
+    cb.type = 'checkbox';
+    cb.checked = selCats.has(c.id);
+    cb.addEventListener('click', (e) => { e.stopPropagation(); toggleCat(c.id, pos, e, visiveis); });
+    li.append(cb);
 
     li.append(el('span', 'grip', '⠿'), el('span', 'cname', c.name),
               el('span', 'cnum', (cnt.get(c.id) || 0).toLocaleString('pt-BR')));
@@ -224,24 +240,52 @@ function renderCats() {
     menu.addEventListener('click', (e) => { e.stopPropagation(); catMenu(c); });
     li.append(menu);
 
-    li.addEventListener('click', () => { curCat = c.id; clearSel(); renderCats(); renderList(); });
+    li.addEventListener('click', (e) => {
+      if (e.shiftKey || e.metaKey || e.ctrlKey) { toggleCat(c.id, pos, e, visiveis); return; }
+      curCat = c.id; clearSel(); renderCats(); renderList();
+    });
     li.addEventListener('dblclick', () => renameCat(c));
 
     // reordenar pastas
     li.addEventListener('dragstart', (e) => {
       if (dragItems) return;
-      e.dataTransfer.setData('text/cat', String(i));
+      if (!selCats.has(c.id)) { selCats.clear(); selCats.add(c.id); renderCats(); }
+      dragCats = true;
+      e.dataTransfer.setData('text/cat', c.id);
       e.dataTransfer.effectAllowed = 'move';
       li.classList.add('dragging');
     });
-    li.addEventListener('dragend', () => li.classList.remove('dragging'));
+    li.addEventListener('dragend', () => { dragCats = false; li.classList.remove('dragging'); });
     bindCatDrop(li, c);
     ul.append(li);
   });
 
   const vis = catsOf(kind).filter((c) => !c.hidden).length;
   $('#side-foot').textContent = `${catsOf(kind).length} pastas · ${vis} visíveis`;
+
+  const n = selCats.size;
+  $('#cat-bulk').hidden = n === 0;
+  if (n) $('#cat-bulk-info').textContent =
+    `${n} pasta${n > 1 ? 's' : ''} selecionada${n > 1 ? 's' : ''} · ` +
+    `${catalog[kind].filter((it) => selCats.has(effCat(kind, it))).length.toLocaleString('pt-BR')} itens`;
+  $('#cat-sel-all').checked = n > 0 && n === visiveis.length;
 }
+
+/* -------------------------------------------------- selecao de pastas */
+
+function toggleCat(id, pos, e, visiveis) {
+  if (e.shiftKey && lastCatClicked >= 0 && visiveis) {
+    const [a, b] = [Math.min(lastCatClicked, pos), Math.max(lastCatClicked, pos)];
+    for (let x = a; x <= b; x++) selCats.add(visiveis[x]);
+  } else {
+    selCats.has(id) ? selCats.delete(id) : selCats.add(id);
+  }
+  lastCatClicked = pos;
+  renderCats();
+}
+
+const clearCatSel = () => { selCats.clear(); lastCatClicked = -1; };
+const selectedCats = () => catsOf(kind).filter((c) => selCats.has(c.id));
 
 /** Uma pasta aceita tanto itens arrastados quanto outra pasta (reordenar). */
 function bindCatDrop(node, cat) {
@@ -260,14 +304,23 @@ function bindCatDrop(node, cat) {
     if (dragItems && cat) { moveSelectedTo(cat.id); return; }
 
     const from = e.dataTransfer.getData('text/cat');
-    if (from === '') return;
-    const list = state.cats[kind];
-    const item = list.splice(Number(from), 1)[0];
-    const to = cat ? list.findIndex((c) => c.id === cat.id) : 0;
-    list.splice(to < 0 ? list.length : to, 0, item);
-    dirty = true;
-    renderCats();
+    if (!from) return;
+    moverPastas(cat ? cat.id : null);
   });
+}
+
+/** Reordena: as pastas selecionadas vao para antes de `destinoId` (ou para o topo). */
+function moverPastas(destinoId) {
+  const list = state.cats[kind];
+  const movendo = list.filter((c) => selCats.has(c.id));
+  if (!movendo.length || (destinoId && selCats.has(destinoId))) return;
+
+  const resto = list.filter((c) => !selCats.has(c.id));
+  const at = destinoId ? resto.findIndex((c) => c.id === destinoId) : 0;
+  resto.splice(at < 0 ? resto.length : at, 0, ...movendo);
+  state.cats[kind] = resto;
+  dirty = true;
+  renderCats();
 }
 
 function computeView() {
@@ -432,10 +485,10 @@ function renameOne(it) {
   );
 }
 
-function bulkRename() {
-  const items = selectedItems();
+/** Caixa de localizar/substituir. Entrega ao chamador a funcao que monta o nome. */
+function dialogRenomear(titulo, amostras, onApply) {
   modal(
-    `<h2>Renomear ${items.length} item(ns)</h2>
+    `<h2>${titulo}</h2>
      <label>Localizar (deixe vazio para não substituir)</label><input type="text" id="br-find">
      <label>Substituir por</label><input type="text" id="br-repl">
      <label>Adicionar antes / depois</label>
@@ -459,21 +512,28 @@ function bulkRename() {
         return (get('#br-pre').value + out + get('#br-suf').value).trim();
       };
       const preview = () => {
-        const sample = items.slice(0, 2).map((it) => `${effName(kind, it)}  →  ${build(effName(kind, it))}`);
+        const sample = amostras.slice(0, 2).map((n) => `${n}  →  ${build(n)}`);
         get('#br-prev').textContent = 'Prévia: ' + (sample.join('   |   ') || '—');
       };
       box.querySelectorAll('input').forEach((i) => i.addEventListener('input', preview));
       preview();
-      get('#br-ok').addEventListener('click', () => {
-        let n = 0;
-        for (const it of items) {
-          const nn = build(effName(kind, it));
-          if (nn && nn !== effName(kind, it)) { patch(kind, idOf(kind, it), { n: nn }); n++; }
-        }
-        close(); renderList(); toast(`${n} nome(s) alterado(s)`);
-      });
+      get('#br-ok').addEventListener('click', () => { close(); onApply(build); });
     }
   );
+}
+
+function bulkRename() {
+  const items = selectedItems();
+  dialogRenomear(`Renomear ${items.length} item(ns)`, items.map((it) => effName(kind, it)), (build) => {
+    let n = 0;
+    for (const it of items) {
+      const atual = effName(kind, it);
+      const novo = build(atual);
+      if (novo && novo !== atual) { patch(kind, idOf(kind, it), { n: novo }); n++; }
+    }
+    renderList();
+    toast(`${n} nome(s) alterado(s)`);
+  });
 }
 
 function catMenu(c) {
@@ -517,6 +577,106 @@ function catMenu(c) {
       );
     }
   );
+}
+
+/* ------------------------------------------- acoes em massa nas pastas */
+
+function catBulkAction(act) {
+  const cats = selectedCats();
+  if (!cats.length) return;
+  const ids = new Set(cats.map((c) => c.id));
+  const itensDe = (idset) => catalog[kind].filter((it) => idset.has(effCat(kind, it)));
+
+  if (act === 'hide' || act === 'show') {
+    for (const c of cats) c.hidden = act === 'hide';
+    dirty = true;
+    renderCats(); renderList();
+    toast(`${cats.length} pasta(s) ${act === 'hide' ? 'ocultada(s)' : 'exibida(s)'}`);
+    return;
+  }
+
+  if (act === 'rename') {
+    dialogRenomear(`Renomear ${cats.length} pasta(s)`, cats.map((c) => c.name), (build) => {
+      let n = 0;
+      for (const c of cats) {
+        const novo = build(c.name);
+        if (novo && novo !== c.name) { c.name = novo; n++; }
+      }
+      dirty = true;
+      renderCats(); renderList();
+      toast(`${n} pasta(s) renomeada(s)`);
+    });
+    return;
+  }
+
+  if (act === 'merge') {
+    if (cats.length < 2) { toast('Selecione ao menos 2 pastas para mesclar'); return; }
+    const destino = cats[0];
+    const total = itensDe(ids).length;
+    modal(
+      `<h2>Mesclar ${cats.length} pastas</h2>
+       <p class="muted" style="font-size:13px">
+         ${total.toLocaleString('pt-BR')} itens vão para uma única pasta. As outras ${cats.length - 1} são removidas.
+       </p>
+       <div class="pick-list" style="margin:12px 0;max-height:150px">
+         ${cats.map((c) => `<div style="cursor:default">${escapeHtml(c.name)}</div>`).join('')}
+       </div>
+       <label>Nome da pasta final</label>
+       <input type="text" id="mg-nome" value="${escapeHtml(destino.name)}">
+       <div class="modal-actions">
+         <button data-close class="ghost">Cancelar</button>
+         <button id="mg-ok" class="primary">Mesclar</button>
+       </div>`,
+      (box, close) => {
+        const input = box.querySelector('#mg-nome');
+        const go = () => {
+          for (const it of itensDe(ids)) patch(kind, idOf(kind, it), { c: destino.id });
+          destino.name = input.value.trim() || destino.name;
+          state.cats[kind] = state.cats[kind].filter((c) => c.id === destino.id || !ids.has(c.id));
+          dirty = true;
+          clearCatSel();
+          if (!catById(kind, curCat)) curCat = 'all';
+          close(); renderCats(); renderList();
+          toast(`${total.toLocaleString('pt-BR')} itens reunidos em "${destino.name}"`);
+        };
+        box.querySelector('#mg-ok').addEventListener('click', go);
+        onEnter(input, go);
+      }
+    );
+    return;
+  }
+
+  if (act === 'moveto') {
+    const itens = itensDe(ids);
+    pickFolder(`Mover ${itens.length.toLocaleString('pt-BR')} itens para…`, (target) => {
+      if (ids.has(target)) { toast('Escolha uma pasta que não esteja selecionada'); return; }
+      for (const it of itens) patch(kind, idOf(kind, it), { c: target });
+      renderCats(); renderList();
+      toast(`${itens.length.toLocaleString('pt-BR')} itens movidos`);
+    });
+    return;
+  }
+
+  if (act === 'top') { moverPastas(null); toast(`${cats.length} pasta(s) movida(s) para o topo`); return; }
+
+  if (act === 'delete') {
+    const itens = itensDe(ids);
+    if (!confirm(
+      `Excluir ${cats.length} pasta(s)?\n\n` +
+      `${itens.length.toLocaleString('pt-BR')} itens vão para "Sem pasta" — nada é perdido, ` +
+      `e você pode movê-los de volta depois.`
+    )) return;
+    for (const it of itens) patch(kind, idOf(kind, it), { c: UNCAT });
+    state.cats[kind] = state.cats[kind].filter((c) => !ids.has(c.id));
+    dirty = true;
+    clearCatSel();
+    if (!catById(kind, curCat)) curCat = 'all';
+    renderCats(); renderList();
+    toast(`${cats.length} pasta(s) excluída(s)`);
+    return;
+  }
+
+  if (act === 'none') { clearCatSel(); renderCats(); }
 }
 
 function renameCat(c) {
@@ -950,6 +1110,7 @@ $('#tabs').addEventListener('click', (e) => {
   kind = b.dataset.kind;
   curCat = 'all';
   clearSel();
+  clearCatSel();
   seedCats(kind);
   renderTabs(); renderCats(); renderList();
 });
@@ -961,6 +1122,22 @@ $('#btn-sync').addEventListener('click', () => {
 $('#btn-publish').addEventListener('click', publish);
 $('#btn-link').addEventListener('click', showLink);
 $('#btn-new-cat').addEventListener('click', newCat);
+
+$('#cat-bulk').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) catBulkAction(b.dataset.cact);
+});
+
+$('#cat-sel-all').addEventListener('change', (e) => {
+  const filtro = $('#cat-search').value.trim().toLowerCase();
+  clearCatSel();
+  if (e.target.checked) {
+    for (const c of catsOf(kind)) {
+      if (!filtro || c.name.toLowerCase().includes(filtro)) selCats.add(c.id);
+    }
+  }
+  renderCats();
+});
 $('#cat-search').addEventListener('input', renderCats);
 $('#item-search').addEventListener('input', () => { renderList(); });
 $('#show-hidden').addEventListener('change', renderList);
@@ -998,7 +1175,10 @@ document.addEventListener('keydown', (e) => {
     for (const i of view) selected.add(idOf(kind, catalog[kind][i]));
     drawRows(); updateSelInfo();
   }
-  if (e.key === 'Escape') { clearSel(); drawRows(); }
+  if (e.key === 'Escape') {
+    if (selCats.size) { clearCatSel(); renderCats(); }
+    clearSel(); drawRows();
+  }
 });
 
 window.addEventListener('beforeunload', (e) => {
