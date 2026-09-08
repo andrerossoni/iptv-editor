@@ -33,7 +33,29 @@ Isso mantém a qualidade, não gasta banda e não consome uma conexão extra do 
 
 ---
 
-## Instalação
+## Instalação — o jeito fácil
+
+Você não precisa entender de programação. Faça assim:
+
+1. Baixe o projeto (botão verde **Code** → **Download ZIP**) e descompacte.
+2. Se ainda não tiver o **Node.js**, baixe em [nodejs.org](https://nodejs.org) —
+   clique no botão verde da esquerda e instale normalmente, apertando "Continuar".
+3. Abra a pasta do projeto e dê **dois cliques** no arquivo **`instalar.command`**.
+
+> Se o Mac disser que "não pode ser aberto porque é de um desenvolvedor não
+> identificado": clique com o **botão direito** no arquivo, escolha **Abrir**,
+> e depois **Abrir** de novo na janela que aparecer.
+
+O instalador conversa com você em português e faz o resto sozinho: cria a conta na
+Cloudflare, pergunta o link do seu provedor e publica tudo. Leva uns 5 minutos.
+
+No fim ele salva um arquivo **`MEUS-DADOS.txt`** com o seu link e as suas senhas.
+
+---
+
+## Instalação — passo a passo manual
+
+Só se você preferir digitar os comandos você mesmo.
 
 Precisa de [Node.js](https://nodejs.org) instalado e de uma conta gratuita na
 [Cloudflare](https://dash.cloudflare.com/sign-up). Não precisa de cartão de crédito.
