@@ -21,11 +21,13 @@ fi
 
 echo
 echo "  Baixando as novidades…"
+# wrangler.toml e MEUS-DADOS.txt sao ignorados pelo git, entao o pull nao os toca
 if [ -d .git ]; then
-  git stash push -q --include-untracked -- wrangler.toml 2>/dev/null
-  git pull --rebase -q origin main 2>&1 | sed 's/^/    /'
-  git stash pop -q 2>/dev/null
-  printf "${V}   ✓ Novidades baixadas${N}\n"
+  if ! git pull --rebase -q origin main 2>&1 | sed 's/^/    /'; then
+    printf "${A}   ! Não consegui baixar as novidades; sigo com os arquivos atuais.${N}\n"
+  else
+    printf "${V}   ✓ Novidades baixadas${N}\n"
+  fi
 else
   printf "${A}   ! Sem histórico do Git aqui; sigo com os arquivos atuais.${N}\n"
 fi
