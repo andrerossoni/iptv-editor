@@ -10,6 +10,29 @@ ok()     { printf "${V}   ✓ %s${N}\n" "$1"; }
 aviso()  { printf "${A}   ! %s${N}\n" "$1"; }
 erro()   { printf "\n${R}   ✗ %s${N}\n\n" "$1"; }
 
+# `wrangler whoami` sai com codigo 0 mesmo sem login, entao olhamos o texto.
+esta_logado() {
+  local out
+  out=$(npx wrangler whoami 2>&1 || true)
+  echo "$out" | grep -qiE "not authenticated|please run .?wrangler login" && return 1
+  echo "$out" | grep -qiE "account id|associated with the email|logged in with" && return 0
+  return 1
+}
+
+garantir_login() {
+  esta_logado && return 0
+  echo
+  echo "  Vou abrir o seu navegador agora."
+  echo "  ${B}Se você ainda não tem conta, clique em \"Sign up\" e crie uma${N}"
+  echo "  (é grátis e não pede cartão). Depois clique no botão azul"
+  echo "  ${B}\"Allow\"${N} para autorizar."
+  echo
+  read -r -p "  Aperte Enter para abrir o navegador."
+  npx wrangler login
+  esta_logado || parar "O login não foi concluído. Rode o instalador de novo e finalize a autorização no navegador."
+  return 0
+}
+
 parar() {
   erro "$1"
   echo "   Copie a mensagem acima e mande para o Claude que ele resolve."
@@ -56,16 +79,10 @@ titulo "PASSO 2 de 6 — Entrando na sua conta Cloudflare"
 
 echo "  A Cloudflare é quem vai hospedar o seu link, de graça."
 echo
-if npx --no-install wrangler whoami >/dev/null 2>&1; then
+if esta_logado; then
   ok "Você já está conectado"
 else
-  echo "  Vou abrir o seu navegador agora."
-  echo "  ${B}Se você ainda não tem conta, clique em \"Sign up\" e crie uma${N}"
-  echo "  (é grátis e não pede cartão). Depois clique no botão azul"
-  echo "  ${B}\"Allow\"${N} para autorizar."
-  echo
-  read -r -p "  Aperte Enter para abrir o navegador."
-  npx wrangler login || parar "Não consegui conectar na Cloudflare."
+  garantir_login
   ok "Conectado"
 fi
 
@@ -78,6 +95,14 @@ if [ -n "$KV_ID" ] && [ "$KV_ID" != "COLE_AQUI_O_ID_DO_KV" ]; then
   ok "Já estava criado"
 else
   SAIDA=$(npx wrangler kv namespace create IPTV 2>&1)
+
+  # sem credencial salva o wrangler reclama de "non-interactive": refaz o login
+  if echo "$SAIDA" | grep -qiE "CLOUDFLARE_API_TOKEN|non-interactive"; then
+    aviso "A conexão com a Cloudflare não tinha sido concluída."
+    garantir_login
+    SAIDA=$(npx wrangler kv namespace create IPTV 2>&1)
+  fi
+
   KV_ID=$(echo "$SAIDA" | grep -oE 'id = "[a-f0-9]{32}"' | head -1 | sed -E 's/.*"(.*)"/\1/')
 
   if [ -z "$KV_ID" ]; then
