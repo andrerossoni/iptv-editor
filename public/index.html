@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IPTV Editor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- Login ------------------------------------------------------------- -->
+<div id="login" class="login">
+  <form class="login-box" id="login-form">
+    <h1>📺 IPTV Editor</h1>
+    <p class="muted">Entre para editar a sua lista.</p>
+    <input type="password" id="login-pass" placeholder="Senha do editor" autocomplete="current-password" required>
+    <button type="submit" class="primary">Entrar</button>
+    <div class="error" id="login-error" hidden></div>
+  </form>
+</div>
+
+<!-- App ---------------------------------------------------------------- -->
+<div id="app" hidden>
+
+  <header class="topbar">
+    <div class="brand">📺 <strong>IPTV Editor</strong></div>
+
+    <nav class="tabs" id="tabs">
+      <button data-kind="live" class="active">Ao Vivo <span class="count" id="c-live">–</span></button>
+      <button data-kind="vod">Filmes <span class="count" id="c-vod">–</span></button>
+      <button data-kind="series">Séries <span class="count" id="c-series">–</span></button>
+    </nav>
+
+    <div class="top-actions">
+      <span class="sync-info" id="sync-info"></span>
+      <button id="btn-sync" class="ghost" title="Rebaixar o catálogo do provedor">↻ Sincronizar</button>
+      <button id="btn-link" class="ghost">🔗 Meu link</button>
+      <button id="btn-publish" class="primary">Publicar</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- Pastas -->
+    <aside class="sidebar">
+      <div class="side-head">
+        <span>Pastas</span>
+        <button id="btn-new-cat" class="mini" title="Criar pasta">+ Nova</button>
+      </div>
+      <div class="side-search">
+        <input type="search" id="cat-search" placeholder="Filtrar pastas…">
+      </div>
+      <ul class="cat-list" id="cat-list"></ul>
+      <div class="side-foot muted" id="side-foot"></div>
+    </aside>
+
+    <!-- Itens -->
+    <section class="content">
+      <div class="toolbar">
+        <input type="search" id="item-search" placeholder="Buscar nesta pasta…">
+        <label class="chk"><input type="checkbox" id="show-hidden"> Mostrar ocultos</label>
+        <span class="spacer"></span>
+        <span class="sel-info" id="sel-info">Nenhum item selecionado</span>
+      </div>
+
+      <div class="bulkbar" id="bulkbar" hidden>
+        <button data-act="move">📁 Mover para…</button>
+        <button data-act="rename">✏️ Renomear em massa</button>
+        <button data-act="hide">🚫 Ocultar</button>
+        <button data-act="show">👁 Mostrar</button>
+        <button data-act="reset">↺ Restaurar original</button>
+        <span class="spacer"></span>
+        <button data-act="none" class="ghost">Limpar seleção</button>
+      </div>
+
+      <div class="list-head">
+        <label class="chk"><input type="checkbox" id="sel-all"></label>
+        <span class="col-name">Nome</span>
+        <span class="col-cat">Pasta</span>
+      </div>
+
+      <div class="list-wrap" id="list-wrap">
+        <div class="list-spacer" id="list-spacer"></div>
+        <div class="list-rows" id="list-rows"></div>
+        <div class="empty" id="list-empty" hidden></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Modal genérico ------------------------------------------------------ -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-box" id="modal-box"></div>
+</div>
+
+<!-- Progresso ----------------------------------------------------------- -->
+<div class="modal" id="progress" hidden>
+  <div class="modal-box">
+    <h2 id="prog-title">Trabalhando…</h2>
+    <div class="bar"><div class="bar-fill" id="prog-fill"></div></div>
+    <p class="muted" id="prog-msg"></p>
+    <div class="log" id="prog-log"></div>
+    <div class="modal-actions"><button id="prog-close" class="ghost" hidden>Fechar</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

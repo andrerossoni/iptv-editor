@@ -1,0 +1,13 @@
+# Copie para .dev.vars para rodar local com `npm run dev`.
+# .dev.vars esta no .gitignore e NUNCA vai para o GitHub.
+
+XTREAM_HOST="servidor-do-provedor.com"
+XTREAM_USER="seu_usuario_do_provedor"
+XTREAM_PASS="sua_senha_do_provedor"
+
+# Credenciais que VOCE inventa. Sao estas que voce coloca no player.
+PLAYLIST_USER="andre"
+PLAYLIST_PASS="troque-isto"
+
+# Senha para entrar em /admin
+ADMIN_PASSWORD="troque-isto-tambem"

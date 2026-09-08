@@ -1,0 +1,28 @@
+name = "iptv-editor"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# sem isto o Worker redireciona /index.html para / e o editor nao abre
+html_handling = "none"
+not_found_handling = "none"
+
+# Criado por: npx wrangler kv namespace create IPTV
+# Cole o id retornado na linha abaixo.
+[[kv_namespaces]]
+binding = "IPTV"
+id = "COLE_AQUI_O_ID_DO_KV"
+
+[vars]
+XTREAM_SCHEME = "https"
+TIMEZONE = "America/Sao_Paulo"
+
+# As credenciais NAO ficam aqui. Sao secrets:
+#   npx wrangler secret put XTREAM_HOST
+#   npx wrangler secret put XTREAM_USER
+#   npx wrangler secret put XTREAM_PASS
+#   npx wrangler secret put PLAYLIST_USER
+#   npx wrangler secret put PLAYLIST_PASS
+#   npx wrangler secret put ADMIN_PASSWORD
