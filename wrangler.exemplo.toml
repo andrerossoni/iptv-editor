@@ -13,7 +13,7 @@ not_found_handling = "none"
 # Cole o id retornado na linha abaixo.
 [[kv_namespaces]]
 binding = "IPTV"
-id = "9fb1ac5fd2544368b2accd4f53e66772"
+id = "COLE_AQUI_O_ID_DO_KV"
 
 [vars]
 XTREAM_SCHEME = "https"

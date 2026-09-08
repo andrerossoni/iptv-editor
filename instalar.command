@@ -68,6 +68,8 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 ok "Node.js $(node -v) encontrado"
 
+[ -f wrangler.toml ] || cp wrangler.exemplo.toml wrangler.toml
+
 if [ ! -d node_modules ]; then
   echo "   Baixando os componentes necessários (demora um pouco)…"
   npm install --no-audit --no-fund --silent || parar "Falhou ao baixar os componentes."
