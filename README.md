@@ -200,9 +200,14 @@ Arrastar uma pasta marcada leva todas as marcadas junto.
 
 **Itens** (lista da direita)
 
-- **Clique** seleciona. **Shift+clique** seleciona um intervalo. **Cmd/Ctrl+clique**
-  soma ou tira um item. **Cmd/Ctrl+A** seleciona tudo que está à vista.
+- **A caixinha de cada item soma à seleção** — marque quantos quiser, sem segurar tecla
+  nenhuma. **Shift+clique** numa caixinha pega o intervalo inteiro.
+- **Clique no nome** (fora da caixinha) seleciona só aquele item, trocando a seleção.
+  **Cmd/Ctrl+A** marca tudo que está à vista.
 - **Arraste** os itens selecionados para cima de uma pasta para movê-los.
+- **Arraste sobre outro item** para mudar a posição: uma linha azul mostra onde vai cair.
+  Em "Todos os itens", soltar perto de um item de outra pasta move para lá também.
+- **⬆ Topo** e **⬇ Fim** levam os selecionados para o começo ou o fim da pasta.
 - **Duplo clique** renomeia um item.
 - Com itens selecionados aparece a barra de ações:
   - **Mover para…** joga tudo para outra pasta.
@@ -210,6 +215,19 @@ Arrastar uma pasta marcada leva todas as marcadas junto.
     expressão regular e mostra uma prévia antes de aplicar.
   - **Ocultar** / **Mostrar** tira ou devolve itens da lista publicada.
   - **Restaurar original** desfaz as suas mudanças naqueles itens.
+
+As barras de edição ficam sempre no lugar, logo abaixo do cabeçalho: a de cima age
+sobre pastas, a de baixo sobre itens. Os botões só liberam quando há algo marcado,
+e nada muda de posição na tela enquanto você clica.
+
+### A ordem da lista
+
+"Todos os itens" não mostra em ordem alfabética: mostra na mesma ordem que o player
+vai receber — pasta por pasta, seguindo a barra lateral, e dentro de cada pasta na
+ordem que você definiu.
+
+Para mudar a ordem das pastas, arraste-as na barra lateral. Para mudar a ordem dos
+canais dentro de uma pasta, arraste os itens ou use **⬆ Topo** / **⬇ Fim**.
 
 As suas edições ficam salvas na nuvem (salvamento automático a cada 30 segundos),
 então dá para editar do Mac hoje e continuar do celular amanhã.

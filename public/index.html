@@ -40,6 +40,22 @@
     </div>
   </header>
 
+  <div class="subbar">
+    <span class="subbar-label">Pastas</span>
+    <button id="btn-new-cat" title="Criar uma pasta nova">＋ Nova</button>
+    <span class="sep"></span>
+    <button data-cact="rename"  disabled>✏️ Renomear</button>
+    <button data-cact="merge"   disabled>🔗 Mesclar</button>
+    <button data-cact="moveto"  disabled>📤 Esvaziar em…</button>
+    <button data-cact="hide"    disabled>🚫 Ocultar</button>
+    <button data-cact="show"    disabled>👁 Mostrar</button>
+    <button data-cact="top"     disabled>⬆ Para o topo</button>
+    <button data-cact="delete"  disabled class="danger">🗑 Excluir</button>
+    <span class="spacer"></span>
+    <span class="subbar-info" id="cat-bulk-info">Marque uma pasta para liberar a edição</span>
+    <button data-cact="none" class="ghost" id="cat-clear" disabled>Limpar</button>
+  </div>
+
   <main class="layout">
 
     <!-- Pastas -->
@@ -49,25 +65,11 @@
           <input type="checkbox" id="cat-sel-all">
         </label>
         <span>Pastas</span>
-        <button id="btn-new-cat" class="mini" title="Criar pasta">+ Nova</button>
       </div>
       <div class="side-search">
         <input type="search" id="cat-search" placeholder="Filtrar pastas…">
       </div>
 
-      <div class="cat-bulk" id="cat-bulk" hidden>
-        <div class="cat-bulk-info" id="cat-bulk-info"></div>
-        <div class="cat-bulk-grid">
-          <button data-cact="hide">🚫 Ocultar</button>
-          <button data-cact="show">👁 Mostrar</button>
-          <button data-cact="rename">✏️ Renomear</button>
-          <button data-cact="merge">🔗 Mesclar</button>
-          <button data-cact="moveto">📤 Esvaziar em…</button>
-          <button data-cact="top">⬆ Para o topo</button>
-          <button data-cact="delete" class="danger">🗑 Excluir</button>
-          <button data-cact="none" class="ghost">Limpar</button>
-        </div>
-      </div>
 
       <ul class="cat-list" id="cat-list"></ul>
       <div class="side-foot muted" id="side-foot"></div>
@@ -82,14 +84,18 @@
         <span class="sel-info" id="sel-info">Nenhum item selecionado</span>
       </div>
 
-      <div class="bulkbar" id="bulkbar" hidden>
-        <button data-act="move">📁 Mover para…</button>
-        <button data-act="rename">✏️ Renomear em massa</button>
-        <button data-act="hide">🚫 Ocultar</button>
-        <button data-act="show">👁 Mostrar</button>
-        <button data-act="reset">↺ Restaurar original</button>
+      <div class="bulkbar" id="bulkbar">
+        <span class="subbar-label">Itens</span>
+        <button data-act="move" disabled>📁 Mover para…</button>
+        <button data-act="rename" disabled>✏️ Renomear em massa</button>
+        <button data-act="hide" disabled>🚫 Ocultar</button>
+        <button data-act="show" disabled>👁 Mostrar</button>
+        <button data-act="reset" disabled>↺ Restaurar original</button>
+        <span class="sep"></span>
+        <button data-act="top" disabled title="Levar para o começo da pasta">⬆ Topo</button>
+        <button data-act="bottom" disabled title="Levar para o fim da pasta">⬇ Fim</button>
         <span class="spacer"></span>
-        <button data-act="none" class="ghost">Limpar seleção</button>
+        <button data-act="none" class="ghost" disabled>Limpar seleção</button>
       </div>
 
       <div class="list-head">

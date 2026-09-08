@@ -165,6 +165,33 @@ function isHidden(k, it) {
   return !!(c && c.hidden);
 }
 
+/** Posicao do item dentro da pasta. Sem ajuste manual, vale a ordem do provedor. */
+const ordOf = (k, it, idx) => {
+  const o = ov(k, idOf(k, it));
+  return o && o.o != null ? o.o : idx;
+};
+
+/* A ordenacao completa e cara com 27 mil itens, entao fica em cache ate mudar. */
+let orderCache = {};
+const invalidateOrder = (k) => { if (k) delete orderCache[k]; else orderCache = {}; };
+
+/** Itens na ordem em que o player vai mostrar: pasta por pasta, na ordem da barra lateral. */
+function sortedIndices(k) {
+  if (orderCache[k]) return orderCache[k];
+  const arr = catalog[k];
+  const pos = new Map(catsOf(k).map((c, i) => [c.id, i]));
+  const cat = new Int32Array(arr.length);
+  const ord = new Float64Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    cat[i] = pos.has(effCat(k, arr[i])) ? pos.get(effCat(k, arr[i])) : 0x7fffffff;
+    ord[i] = ordOf(k, arr[i], i);
+  }
+  const idx = Array.from(arr, (_, i) => i);
+  idx.sort((a, b) => cat[a] - cat[b] || ord[a] - ord[b] || a - b);
+  orderCache[k] = idx;
+  return idx;
+}
+
 function patch(k, id, changes) {
   const cur = state.items[k][id] || {};
   const next = { ...cur, ...changes };
@@ -172,6 +199,7 @@ function patch(k, id, changes) {
   if (Object.keys(next).length) state.items[k][id] = next;
   else delete state.items[k][id];
   dirty = true;
+  invalidateOrder(k);
 }
 
 /** Pasta "Sem pasta" so aparece quando ha itens nela. */
@@ -264,10 +292,13 @@ function renderCats() {
   $('#side-foot').textContent = `${catsOf(kind).length} pastas · ${vis} visíveis`;
 
   const n = selCats.size;
-  $('#cat-bulk').hidden = n === 0;
-  if (n) $('#cat-bulk-info').textContent =
-    `${n} pasta${n > 1 ? 's' : ''} selecionada${n > 1 ? 's' : ''} · ` +
-    `${catalog[kind].filter((it) => selCats.has(effCat(kind, it))).length.toLocaleString('pt-BR')} itens`;
+  $$('.subbar [data-cact]').forEach((b) => { b.disabled = n === 0; });
+  const info = $('#cat-bulk-info');
+  info.classList.toggle('on', n > 0);
+  info.textContent = n
+    ? `${n} pasta${n > 1 ? 's' : ''} · ` +
+      `${catalog[kind].filter((it) => selCats.has(effCat(kind, it))).length.toLocaleString('pt-BR')} itens`
+    : 'Marque uma pasta para liberar a edição';
   $('#cat-sel-all').checked = n > 0 && n === visiveis.length;
 }
 
@@ -309,6 +340,82 @@ function bindCatDrop(node, cat) {
   });
 }
 
+/** Numeros de ordem da pasta, ja na sequencia atual. */
+function ordensDaPasta(k, catId, excluir) {
+  const out = [];
+  for (const i of sortedIndices(k)) {
+    const it = catalog[k][i];
+    if (effCat(k, it) !== catId) continue;
+    if (excluir && excluir.has(idOf(k, it))) continue;
+    out.push({ i, ord: ordOf(k, it, i) });
+  }
+  return out;
+}
+
+/** Reescreve a pasta com 0,1,2… quando as frações ficam pequenas demais. */
+function normalizarPasta(k, catId) {
+  ordensDaPasta(k, catId).forEach((e, n) => patch(k, idOf(k, catalog[k][e.i]), { o: n }));
+}
+
+/** Solta os itens selecionados antes (ou depois) da linha alvo. */
+function soltarItensEm(alvoIdx, depois) {
+  const ids = new Set(selected);
+  if (!ids.size) return;
+  const alvo = catalog[kind][alvoIdx];
+  const destCat = effCat(kind, alvo);
+
+  const restantes = ordensDaPasta(kind, destCat, ids);
+  let at = restantes.findIndex((e) => e.i === alvoIdx);
+  if (at < 0) at = restantes.length - 1;
+  const insercao = depois ? at + 1 : at;
+
+  const prev = insercao > 0 ? restantes[insercao - 1].ord : null;
+  const next = insercao < restantes.length ? restantes[insercao].ord : null;
+
+  let lo, hi;
+  if (prev === null && next === null) { lo = 0; hi = ids.size + 1; }
+  else if (prev === null) { lo = next - 1; hi = next; }
+  else if (next === null) { lo = prev; hi = prev + 1; }
+  else { lo = prev; hi = next; }
+
+  if (hi - lo < 1e-6) {            // frações no limite: renumera e refaz
+    normalizarPasta(kind, destCat);
+    soltarItensEm(alvoIdx, depois);
+    return;
+  }
+
+  const passo = (hi - lo) / (ids.size + 1);
+  const movidos = sortedIndices(kind).filter((i) => ids.has(idOf(kind, catalog[kind][i])));
+  movidos.forEach((i, n) => patch(kind, idOf(kind, catalog[kind][i]), { o: lo + passo * (n + 1), c: destCat }));
+
+  renderCats(); renderList();
+  toast(`${movidos.length} item(ns) reposicionado(s)`);
+}
+
+/** Manda os selecionados para o começo ou para o fim das suas pastas. */
+function itensParaExtremo(topo) {
+  const items = selectedItems();
+  if (!items.length) return;
+  const porPasta = new Map();
+  for (const it of items) {
+    const c = effCat(kind, it);
+    if (!porPasta.has(c)) porPasta.set(c, []);
+    porPasta.get(c).push(it);
+  }
+  const ids = new Set(items.map((it) => idOf(kind, it)));
+
+  for (const [c, lista] of porPasta) {
+    const outros = ordensDaPasta(kind, c, ids);
+    let base;
+    if (!outros.length) base = 0;
+    else if (topo) base = outros.reduce((m, e) => Math.min(m, e.ord), Infinity) - lista.length;
+    else base = outros.reduce((m, e) => Math.max(m, e.ord), -Infinity) + 1;
+    lista.forEach((it, n) => patch(kind, idOf(kind, it), { o: base + n }));
+  }
+  renderList();
+  toast(`${items.length} item(ns) no ${topo ? 'começo' : 'fim'} da pasta`);
+}
+
 /** Reordena: as pastas selecionadas vao para antes de `destinoId` (ou para o topo). */
 function moverPastas(destinoId) {
   const list = state.cats[kind];
@@ -320,6 +427,7 @@ function moverPastas(destinoId) {
   resto.splice(at < 0 ? resto.length : at, 0, ...movendo);
   state.cats[kind] = resto;
   dirty = true;
+  invalidateOrder(kind);
   renderCats();
 }
 
@@ -328,7 +436,7 @@ function computeView() {
   const showHidden = $('#show-hidden').checked;
   view = [];
   const arr = catalog[kind];
-  for (let i = 0; i < arr.length; i++) {
+  for (const i of sortedIndices(kind)) {
     const it = arr[i];
     if (curCat !== 'all' && effCat(kind, it) !== curCat) continue;
     if (!showHidden && isHidden(kind, it)) continue;
@@ -368,11 +476,12 @@ function drawRows() {
     const row = el('div', 'row' + (selected.has(id) ? ' sel' : '') + (hidden ? ' item-hidden' : ''));
     row.draggable = true;
     row.dataset.vi = vi;
+    row.dataset.id = id;
 
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = selected.has(id);
-    cb.addEventListener('click', (e) => { e.stopPropagation(); toggle(id, vi, e); });
+    cb.addEventListener('click', (e) => { e.stopPropagation(); marcar(id, vi, e); });
     row.append(cb);
 
     const name = el('span', 'rname', effName(kind, it));
@@ -384,8 +493,26 @@ function drawRows() {
 
     row.addEventListener('click', (e) => toggle(id, vi, e));
     row.addEventListener('dblclick', () => renameOne(it));
+
+    // soltar sobre uma linha reposiciona; a metade de cima insere antes
+    row.addEventListener('dragover', (e) => {
+      if (!dragItems || selected.has(id)) return;
+      e.preventDefault();
+      const r = row.getBoundingClientRect();
+      const depois = e.clientY - r.top > r.height / 2;
+      row.classList.toggle('drop-after', depois);
+      row.classList.toggle('drop-before', !depois);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+    row.addEventListener('drop', (e) => {
+      if (!dragItems || selected.has(id)) return;
+      e.preventDefault();
+      const depois = row.classList.contains('drop-after');
+      row.classList.remove('drop-before', 'drop-after');
+      soltarItensEm(i, depois);
+    });
     row.addEventListener('dragstart', (e) => {
-      if (!selected.has(id)) { selected.clear(); selected.add(id); drawRows(); updateSelInfo(); }
+      if (!selected.has(id)) { selected.clear(); selected.add(id); refreshSelClasses(); }
       dragItems = true;
       e.dataTransfer.setData('text/items', '1');
       e.dataTransfer.effectAllowed = 'move';
@@ -415,6 +542,34 @@ function toggle(id, vi, e) {
   updateSelInfo();
 }
 
+/** Checkbox: soma ou tira da selecao. Nunca zera o que ja estava marcado. */
+function marcar(id, vi, e) {
+  if (e.shiftKey && lastClicked >= 0) {
+    const [a, b] = [Math.min(lastClicked, vi), Math.max(lastClicked, vi)];
+    const ligar = !selected.has(id);
+    for (let x = a; x <= b; x++) {
+      const xid = idOf(kind, catalog[kind][view[x]]);
+      ligar ? selected.add(xid) : selected.delete(xid);
+    }
+  } else {
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+  }
+  lastClicked = vi;
+  drawRows();
+  updateSelInfo();
+}
+
+/** Atualiza o destaque da selecao sem recriar as linhas (o arrasto depende disso). */
+function refreshSelClasses() {
+  for (const row of $$('#list-rows .row')) {
+    const on = selected.has(row.dataset.id);
+    row.classList.toggle('sel', on);
+    const cb = row.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = on;
+  }
+  updateSelInfo();
+}
+
 function clearSel() { selected.clear(); lastClicked = -1; updateSelInfo(); }
 
 function updateSelInfo() {
@@ -422,7 +577,7 @@ function updateSelInfo() {
   $('#sel-info').textContent = n
     ? `${n.toLocaleString('pt-BR')} selecionado${n > 1 ? 's' : ''} · ${view.length.toLocaleString('pt-BR')} exibidos`
     : `${view.length.toLocaleString('pt-BR')} itens exibidos`;
-  $('#bulkbar').hidden = n === 0;
+  $$('#bulkbar button').forEach((b) => { b.disabled = n === 0; });
   $('#sel-all').checked = n > 0 && n === view.length;
 }
 
@@ -570,6 +725,7 @@ function catMenu(c) {
             for (const it of catalog[kind]) if (effCat(kind, it) === c.id) patch(kind, idOf(kind, it), { c: UNCAT });
             state.cats[kind] = state.cats[kind].filter((x) => x.id !== c.id);
             dirty = true;
+            invalidateOrder(kind);
             if (curCat === c.id) curCat = 'all';
             renderCats(); renderList(); toast('Pasta excluída');
           }
@@ -590,6 +746,7 @@ function catBulkAction(act) {
   if (act === 'hide' || act === 'show') {
     for (const c of cats) c.hidden = act === 'hide';
     dirty = true;
+    invalidateOrder(kind);
     renderCats(); renderList();
     toast(`${cats.length} pasta(s) ${act === 'hide' ? 'ocultada(s)' : 'exibida(s)'}`);
     return;
@@ -634,6 +791,7 @@ function catBulkAction(act) {
           destino.name = input.value.trim() || destino.name;
           state.cats[kind] = state.cats[kind].filter((c) => c.id === destino.id || !ids.has(c.id));
           dirty = true;
+          invalidateOrder(kind);
           clearCatSel();
           if (!catById(kind, curCat)) curCat = 'all';
           close(); renderCats(); renderList();
@@ -669,6 +827,7 @@ function catBulkAction(act) {
     for (const it of itens) patch(kind, idOf(kind, it), { c: UNCAT });
     state.cats[kind] = state.cats[kind].filter((c) => !ids.has(c.id));
     dirty = true;
+    invalidateOrder(kind);
     clearCatSel();
     if (!catById(kind, curCat)) curCat = 'all';
     renderCats(); renderList();
@@ -705,6 +864,7 @@ function newCat() {
         const id = String(Math.max(NEW_CAT_BASE, ...used) + 1);
         state.cats[kind].unshift({ id, name: v, hidden: false });
         dirty = true;
+        invalidateOrder(kind);
         close(); renderCats();
       };
       box.querySelector('#nc-ok').addEventListener('click', save);
@@ -750,6 +910,7 @@ async function sync() {
 
     for (const k of KINDS) seedCats(k);
     dirty = true;
+    invalidateOrder();
 
     prog.done('Catálogo atualizado. Agora edite e clique em Publicar.');
     renderTabs(); renderCats(); renderList(); showSync(Date.now());
@@ -776,7 +937,9 @@ function buildPublished(k) {
   const names = {};
   let num = 1;
 
-  for (const it of catalog[k]) {
+  // a mesma ordem que voce ve no editor: pasta por pasta, item por item
+  for (const idx of sortedIndices(k)) {
+    const it = catalog[k][idx];
     const id = idOf(k, it);
     const o = ov(k, id);
     if (o && o.h) continue;
@@ -1059,6 +1222,7 @@ async function loadAll() {
     showSync(null);
   }
   for (const k of KINDS) seedCats(k);
+  invalidateOrder();
 
   renderTabs(); renderCats(); renderList();
   if (!cached) toast('Clique em ↻ Sincronizar para baixar a sua lista', 5000);
@@ -1123,9 +1287,9 @@ $('#btn-publish').addEventListener('click', publish);
 $('#btn-link').addEventListener('click', showLink);
 $('#btn-new-cat').addEventListener('click', newCat);
 
-$('#cat-bulk').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (b) catBulkAction(b.dataset.cact);
+document.querySelector('.subbar').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-cact]');
+  if (b && !b.disabled) catBulkAction(b.dataset.cact);
 });
 
 $('#cat-sel-all').addEventListener('change', (e) => {
@@ -1150,7 +1314,7 @@ $('#sel-all').addEventListener('change', (e) => {
 
 $('#bulkbar').addEventListener('click', (e) => {
   const b = e.target.closest('button');
-  if (!b) return;
+  if (!b || b.disabled) return;
   const act = b.dataset.act;
   if (act === 'move') pickFolder(`Mover ${selected.size} item(ns) para…`, moveSelectedTo);
   if (act === 'rename') bulkRename();
@@ -1165,6 +1329,7 @@ $('#bulkbar').addEventListener('click', (e) => {
     dirty = true;
     renderCats(); renderList(); toast('Itens restaurados ao original');
   }
+  if (act === 'top' || act === 'bottom') itensParaExtremo(act === 'top');
   if (act === 'none') { clearSel(); drawRows(); }
 });
 

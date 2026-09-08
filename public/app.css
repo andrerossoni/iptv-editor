@@ -72,8 +72,24 @@ input:focus { outline: 2px solid var(--accent-dim); outline-offset: -1px; border
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .sync-info { font-size: 12px; color: var(--muted); }
 
+/* --------------------------------------------------------------- subbar */
+.subbar {
+  height: 42px; display: flex; align-items: center; gap: 6px; padding: 0 14px;
+  background: var(--panel-2); border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.subbar-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); margin-right: 4px; flex: none;
+}
+.subbar button { padding: 5px 10px; font-size: 12.5px; flex: none; }
+.subbar button.danger:not(:disabled) { color: var(--danger); }
+.subbar button:disabled { opacity: .35; }
+.subbar-info { font-size: 12px; color: var(--muted); flex: none; margin-right: 6px; }
+.subbar-info.on { color: var(--accent); font-weight: 600; }
+.sep { width: 1px; height: 20px; background: var(--line); flex: none; margin: 0 4px; }
+
 /* --------------------------------------------------------------- layout */
-.layout { display: flex; height: calc(100vh - 52px); }
+.layout { display: flex; height: calc(100vh - 94px); }
 
 .sidebar {
   width: 300px; flex: none; background: var(--panel); border-right: 1px solid var(--line);
@@ -101,11 +117,9 @@ input:focus { outline: 2px solid var(--accent-dim); outline-offset: -1px; border
 .cat-list li.selcat.active { background: #35609e; }
 .cat-list li .ccheck { accent-color: var(--accent); flex: none; margin: 0; }
 
-.cat-bulk { padding: 8px 10px; background: var(--panel-2); border-block: 1px solid var(--line); }
-.cat-bulk-info { font-size: 11.5px; color: var(--accent); margin-bottom: 7px; font-weight: 600; }
-.cat-bulk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.cat-bulk-grid button { padding: 5px 7px; font-size: 12px; text-align: left; }
-.cat-bulk-grid button.danger { color: var(--danger); }
+/* indicador de onde o item vai cair ao arrastar */
+.row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.row.drop-after  { box-shadow: inset 0 -2px 0 var(--accent); }
 .cat-list li.hidden-cat .cname { text-decoration: line-through; color: var(--muted); }
 .cname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cnum { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -123,9 +137,11 @@ input:focus { outline: 2px solid var(--accent-dim); outline-offset: -1px; border
 .sel-info { font-size: 12px; color: var(--muted); }
 
 .bulkbar {
-  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
-  background: var(--panel-2); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 6px; padding: 7px 14px;
+  background: var(--panel-2); border-bottom: 1px solid var(--line); overflow-x: auto;
 }
+.bulkbar button { flex: none; padding: 5px 10px; font-size: 12.5px; }
+.bulkbar button:disabled { opacity: .35; }
 
 .list-head {
   display: flex; align-items: center; gap: 10px; padding: 7px 14px;
