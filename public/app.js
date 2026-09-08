@@ -652,39 +652,101 @@ function renameOne(it) {
   );
 }
 
-/** Caixa de localizar/substituir. Entrega ao chamador a funcao que monta o nome. */
+/** Monta a funcao que transforma um nome, a partir dos valores ja lidos da tela. */
+function criarTransformador({ achar, trocar, apagar, prefixo, sufixo, regex, caixa }) {
+  return (nome) => {
+    let out = nome;
+    if (achar) {
+      const por = apagar ? '' : trocar;
+      try {
+        if (regex) out = out.replace(new RegExp(achar, caixa ? 'g' : 'gi'), por);
+        else if (caixa) out = out.split(achar).join(por);
+        else out = out.replace(new RegExp(achar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), por);
+      } catch { /* expressao invalida: nao mexe no nome */ }
+    }
+    return (prefixo + out + sufixo).replace(/\s{2,}/g, ' ').trim();
+  };
+}
+
+/** Caixa de localizar/substituir, usada tanto para itens quanto para pastas. */
 function dialogRenomear(titulo, amostras, onApply) {
   modal(
     `<h2>${titulo}</h2>
-     <label>Localizar (deixe vazio para não substituir)</label><input type="text" id="br-find">
-     <label>Substituir por</label><input type="text" id="br-repl">
+
+     <label>Localizar</label>
+     <input type="text" id="br-find" placeholder="texto que você quer achar no nome">
+
+     <label>Substituir por</label>
+     <input type="text" id="br-repl" placeholder="deixe vazio e marque a opção abaixo para apagar">
+
+     <label class="chk" style="margin-top:10px">
+       <input type="checkbox" id="br-del"> 🗑 Apagar o texto encontrado (não colocar nada no lugar)
+     </label>
+
      <label>Adicionar antes / depois</label>
-     <div class="field-row"><input type="text" id="br-pre" placeholder="prefixo"><input type="text" id="br-suf" placeholder="sufixo"></div>
-     <label class="chk" style="margin-top:12px"><input type="checkbox" id="br-re"> Localizar é uma expressão regular</label>
-     <p class="muted" id="br-prev" style="font-size:12px;margin-top:12px"></p>
+     <div class="field-row">
+       <input type="text" id="br-pre" placeholder="prefixo">
+       <input type="text" id="br-suf" placeholder="sufixo">
+     </div>
+
+     <label class="chk" style="margin-top:10px">
+       <input type="checkbox" id="br-case"> Diferenciar maiúsculas de minúsculas
+     </label>
+     <label class="chk" style="margin-top:6px">
+       <input type="checkbox" id="br-re"> "Localizar" é uma expressão regular
+     </label>
+
+     <div class="preview" id="br-prev"></div>
+
      <div class="modal-actions">
        <button data-close class="ghost">Cancelar</button>
        <button id="br-ok" class="primary">Aplicar</button>
      </div>`,
     (box, close) => {
-      const get = (s) => box.querySelector(s);
-      const build = (name) => {
-        const f = get('#br-find').value, r = get('#br-repl').value;
-        let out = name;
-        if (f) {
-          try {
-            out = get('#br-re').checked ? out.replace(new RegExp(f, 'g'), r) : out.split(f).join(r);
-          } catch { /* regex invalida: mantem o nome */ }
-        }
-        return (get('#br-pre').value + out + get('#br-suf').value).trim();
-      };
+      const get = (q) => box.querySelector(q);
+
+      const lerCampos = () => ({
+        achar: get('#br-find').value,
+        trocar: get('#br-repl').value,
+        apagar: get('#br-del').checked,
+        prefixo: get('#br-pre').value,
+        sufixo: get('#br-suf').value,
+        regex: get('#br-re').checked,
+        caixa: get('#br-case').checked,
+      });
+
       const preview = () => {
-        const sample = amostras.slice(0, 2).map((n) => `${n}  →  ${build(n)}`);
-        get('#br-prev').textContent = 'Prévia: ' + (sample.join('   |   ') || '—');
+        const campos = lerCampos();
+        get('#br-repl').disabled = campos.apagar;
+        const build = criarTransformador(campos);
+
+        const mudam = amostras.filter((n) => build(n) && build(n) !== n).length;
+        const ok = get('#br-ok');
+        ok.disabled = mudam === 0;
+
+        const linhas = amostras
+          .filter((n) => build(n) !== n)
+          .slice(0, 3)
+          .map((n) => `<div><span class="de">${escapeHtml(n)}</span> → <span class="para">${escapeHtml(build(n)) || '<em>(vazio — será ignorado)</em>'}</span></div>`)
+          .join('');
+
+        get('#br-prev').innerHTML = mudam
+          ? `<div class="prev-head">${mudam} de ${amostras.length} vão mudar:</div>${linhas}`
+          : '<div class="prev-head muted">Nada muda com esses valores.</div>';
       };
-      box.querySelectorAll('input').forEach((i) => i.addEventListener('input', preview));
+
+      box.querySelectorAll('input').forEach((i) => {
+        i.addEventListener('input', preview);
+        i.addEventListener('change', preview);
+      });
       preview();
-      get('#br-ok').addEventListener('click', () => { close(); onApply(build); });
+
+      get('#br-ok').addEventListener('click', () => {
+        // ler ANTES de fechar: o close() apaga o conteudo do modal
+        const build = criarTransformador(lerCampos());
+        close();
+        onApply(build);
+      });
     }
   );
 }

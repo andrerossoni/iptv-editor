@@ -204,7 +204,7 @@ estiverem à vista (respeitando o filtro de busca). A barra de pastas então lib
 | Botão | O que faz |
 |---|---|
 | **🚫 Ocultar** / **👁 Mostrar** | tira ou devolve as pastas da lista publicada |
-| **✏️ Renomear** | localizar/substituir, prefixo e sufixo em todos os nomes de uma vez |
+| **✏️ Renomear** | mesma caixa de localizar/substituir/apagar dos itens, aplicada aos nomes das pastas |
 | **🔗 Mesclar** | junta tudo numa pasta só — ideal para reunir GLOBO CAPITAL, SUDESTE, SUL… em um "GLOBO" |
 | **📤 Esvaziar em…** | manda o conteúdo para outra pasta, mantendo as pastas vazias |
 | **⬆ Para o topo** | leva as pastas selecionadas para o começo da lista |
@@ -224,8 +224,14 @@ Arrastar uma pasta marcada leva todas as marcadas junto.
 - **Duplo clique** renomeia um item.
 - Com itens selecionados aparece a barra de ações:
   - **Mover para…** joga tudo para outra pasta.
-  - **Renomear em massa** faz localizar/substituir, com prefixo e sufixo. Aceita
-    expressão regular e mostra uma prévia antes de aplicar.
+  - **Renomear em massa** muda todos os nomes de uma vez:
+    - **Localizar** + **Substituir por** troca um texto por outro.
+    - **🗑 Apagar o texto encontrado** remove o texto sem colocar nada no lugar —
+      útil para tirar "HD", "✔️", "[L]" e afins dos nomes.
+    - **Antes / depois** acrescenta prefixo e sufixo.
+    - **Diferenciar maiúsculas** e **expressão regular** para casos mais finos.
+    - A prévia mostra quantos vão mudar e alguns exemplos de antes → depois. Se nada
+      mudar, o botão Aplicar nem libera.
   - **Ocultar** / **Mostrar** tira ou devolve itens da lista publicada.
   - **Restaurar original** desfaz as suas mudanças naqueles itens.
 

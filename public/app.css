@@ -200,6 +200,16 @@ body.selmode .cat-list li { cursor: pointer; }
   word-break: break-all; user-select: all; margin-bottom: 4px;
 }
 
+.preview {
+  margin-top: 14px; padding: 10px 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.7;
+}
+.preview .prev-head { color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+.preview .prev-head.muted { color: var(--muted); font-weight: 400; margin: 0; }
+.preview .de { color: var(--muted); text-decoration: line-through; }
+.preview .para { color: var(--ok); }
+.preview div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .bar { height: 8px; background: var(--bg); border-radius: 99px; overflow: hidden; margin: 6px 0 10px; }
 .bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 .log {
