@@ -30,6 +30,7 @@ let lastClicked = -1;
 let selCats = new Set();      // pastas marcadas para acao em massa
 let lastCatClicked = -1;
 let dragCats = false;
+let selMode = localStorage.getItem('iptv_selmode') === '1';   // seleção de vários ligada?
 let dirty = false;
 
 /* ------------------------------------------------------------------ helpers */
@@ -269,8 +270,15 @@ function renderCats() {
     li.append(menu);
 
     li.addEventListener('click', (e) => {
-      if (e.shiftKey || e.metaKey || e.ctrlKey) { toggleCat(c.id, pos, e, visiveis); return; }
-      curCat = c.id; clearSel(); renderCats(); renderList();
+      // no modo de seleção, qualquer ponto da linha marca/desmarca
+      if (selMode || e.shiftKey || e.metaKey || e.ctrlKey) {
+        toggleCat(c.id, pos, e, visiveis);
+        return;
+      }
+      // fora dele, abrir a pasta já a deixa pronta para a barra de edição
+      curCat = c.id;
+      selCats.clear(); selCats.add(c.id);
+      clearSel(); renderCats(); renderList();
     });
     li.addEventListener('dblclick', () => renameCat(c));
 
@@ -298,7 +306,8 @@ function renderCats() {
   info.textContent = n
     ? `${n} pasta${n > 1 ? 's' : ''} · ` +
       `${catalog[kind].filter((it) => selCats.has(effCat(kind, it))).length.toLocaleString('pt-BR')} itens`
-    : 'Marque uma pasta para liberar a edição';
+    : selMode ? 'Clique nas pastas que quer editar'
+              : 'Clique numa pasta para editá-la';
   $('#cat-sel-all').checked = n > 0 && n === visiveis.length;
 }
 
@@ -528,6 +537,8 @@ $('#list-wrap').addEventListener('scroll', () => drawRows(), { passive: true });
 /* --------------------------------------------------------------- selecao */
 
 function toggle(id, vi, e) {
+  // no modo de seleção, clicar em qualquer ponto da linha soma ou tira
+  if (selMode && !e.shiftKey) { marcar(id, vi, e); return; }
   if (e.shiftKey && lastClicked >= 0) {
     const [a, b] = [Math.min(lastClicked, vi), Math.max(lastClicked, vi)];
     for (let x = a; x <= b; x++) selected.add(idOf(kind, catalog[kind][view[x]]));
@@ -576,7 +587,8 @@ function updateSelInfo() {
   const n = selected.size;
   $('#sel-info').textContent = n
     ? `${n.toLocaleString('pt-BR')} selecionado${n > 1 ? 's' : ''} · ${view.length.toLocaleString('pt-BR')} exibidos`
-    : `${view.length.toLocaleString('pt-BR')} itens exibidos`;
+    : `${view.length.toLocaleString('pt-BR')} itens exibidos` +
+      (selMode ? ' · clique para ir marcando' : '');
   $$('#bulkbar button').forEach((b) => { b.disabled = n === 0; });
   $('#sel-all').checked = n > 0 && n === view.length;
 }
@@ -1224,6 +1236,7 @@ async function loadAll() {
   for (const k of KINDS) seedCats(k);
   invalidateOrder();
 
+  aplicarSelMode();
   renderTabs(); renderCats(); renderList();
   if (!cached) toast('Clique em ↻ Sincronizar para baixar a sua lista', 5000);
 }
@@ -1285,6 +1298,26 @@ $('#btn-sync').addEventListener('click', () => {
 });
 $('#btn-publish').addEventListener('click', publish);
 $('#btn-link').addEventListener('click', showLink);
+function aplicarSelMode() {
+  document.body.classList.toggle('selmode', selMode);
+  $('#btn-selmode').classList.toggle('on', selMode);
+  $('#btn-selmode').title = selMode
+    ? 'Desligar: volta a clicar para abrir e editar um de cada vez'
+    : 'Ligar: clique em qualquer ponto da linha para ir marcando vários';
+}
+
+$('#btn-selmode').addEventListener('click', () => {
+  selMode = !selMode;
+  localStorage.setItem('iptv_selmode', selMode ? '1' : '0');
+  // trocar de modo começa com a seleção limpa, para não agir sobre o que ficou para trás
+  clearCatSel(); clearSel();
+  aplicarSelMode();
+  renderCats(); renderList();
+  toast(selMode
+    ? 'Seleção múltipla ligada — clique nas linhas para ir marcando'
+    : 'Seleção múltipla desligada');
+});
+
 $('#btn-new-cat').addEventListener('click', newCat);
 
 document.querySelector('.subbar').addEventListener('click', (e) => {

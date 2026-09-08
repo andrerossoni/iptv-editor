@@ -70,6 +70,18 @@ input:focus { outline: 2px solid var(--accent-dim); outline-offset: -1px; border
 .tabs button.active { background: var(--panel-2); border-color: var(--line); color: #fff; }
 .tabs .count { color: var(--muted); font-size: 12px; margin-left: 5px; }
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* fora do modo de seleção não existe caixinha nenhuma na tela */
+body:not(.selmode) .ccheck,
+body:not(.selmode) .row input[type=checkbox],
+body:not(.selmode) .list-head .chk,
+body:not(.selmode) .side-head .chk { display: none; }
+
+#btn-selmode.on {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+body.selmode .row { cursor: pointer; }
+body.selmode .cat-list li { cursor: pointer; }
 .sync-info { font-size: 12px; color: var(--muted); }
 
 /* --------------------------------------------------------------- subbar */

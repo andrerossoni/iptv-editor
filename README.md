@@ -173,6 +173,20 @@ https://SEU-ENDEREÇO.workers.dev/xmltv.php?username=USER&password=SENHA
 
 ## O que dá para editar
 
+### Os dois modos
+
+No alto da tela existe o botão **☑️ Seleção múltipla**.
+
+**Desligado** (como o editor abre) — você mexe em um de cada vez. Não há caixinhas
+na tela: clicar numa pasta abre ela e já libera a barra de edição para ela; clicar
+num item escolhe aquele item; duplo clique renomeia; e você pode arrastar à vontade.
+
+**Ligado** — aparecem as caixinhas, e **clicar em qualquer ponto da linha** marca ou
+desmarca, sem precisar acertar a caixinha. Vale para pastas e para itens. Shift+clique
+pega um intervalo inteiro. Arrastar continua funcionando, levando tudo que estiver marcado.
+
+O botão lembra a sua escolha para a próxima vez.
+
 **Pastas** (coluna da esquerda)
 
 - **+ Nova** cria uma pasta.
@@ -183,9 +197,9 @@ https://SEU-ENDEREÇO.workers.dev/xmltv.php?username=USER&password=SENHA
 
 **Várias pastas de uma vez**
 
-Marque a caixinha ao lado de cada pasta. **Shift+clique** pega um intervalo inteiro,
-e a caixinha no topo marca todas que estiverem à vista (respeitando o filtro de busca).
-Com pastas marcadas aparece esta barra:
+Ligue a **☑️ Seleção múltipla** e clique nas pastas que quiser — em qualquer ponto da
+linha. **Shift+clique** pega um intervalo inteiro, e a caixinha no topo marca todas que
+estiverem à vista (respeitando o filtro de busca). A barra de pastas então libera:
 
 | Botão | O que faz |
 |---|---|
@@ -200,10 +214,9 @@ Arrastar uma pasta marcada leva todas as marcadas junto.
 
 **Itens** (lista da direita)
 
-- **A caixinha de cada item soma à seleção** — marque quantos quiser, sem segurar tecla
-  nenhuma. **Shift+clique** numa caixinha pega o intervalo inteiro.
-- **Clique no nome** (fora da caixinha) seleciona só aquele item, trocando a seleção.
-  **Cmd/Ctrl+A** marca tudo que está à vista.
+- Com a **seleção múltipla ligada**, clicar em qualquer ponto da linha marca ou desmarca.
+  **Shift+clique** pega o intervalo inteiro e **Cmd/Ctrl+A** marca tudo que está à vista.
+- Com ela **desligada**, o clique escolhe só aquele item.
 - **Arraste** os itens selecionados para cima de uma pasta para movê-los.
 - **Arraste sobre outro item** para mudar a posição: uma linha azul mostra onde vai cair.
   Em "Todos os itens", soltar perto de um item de outra pasta move para lá também.
