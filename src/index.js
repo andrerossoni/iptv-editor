@@ -247,7 +247,10 @@ function redirectStream(env, kind, user, pass, file) {
   if (!safeEqual(user, env.PLAYLIST_USER) || !safeEqual(pass, env.PLAYLIST_PASS)) {
     return text('Credenciais invalidas', 401);
   }
-  const target = `${upstreamBase(env)}/${kind}/${encodeURIComponent(env.XTREAM_USER)}/${encodeURIComponent(env.XTREAM_PASS)}/${file}`;
+  // O provedor repete o esquema no redirect para o no de video; alguns nos sao
+  // IP puro e nao tem certificado, entao o video pode precisar de http.
+  const scheme = env.STREAM_SCHEME || env.XTREAM_SCHEME || 'https';
+  const target = `${scheme}://${env.XTREAM_HOST}/${kind}/${encodeURIComponent(env.XTREAM_USER)}/${encodeURIComponent(env.XTREAM_PASS)}/${file}`;
   return Response.redirect(target, 302);
 }
 

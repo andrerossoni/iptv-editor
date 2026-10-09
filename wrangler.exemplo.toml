@@ -17,6 +17,9 @@ id = "COLE_AQUI_O_ID_DO_KV"
 
 [vars]
 XTREAM_SCHEME = "https"
+# Se filmes e series nao abrirem (o provedor redireciona para um IP sem
+# certificado), descomente para mandar so o video por http:
+# STREAM_SCHEME = "http"
 TIMEZONE = "America/Sao_Paulo"
 
 # As credenciais NAO ficam aqui. Sao secrets:
