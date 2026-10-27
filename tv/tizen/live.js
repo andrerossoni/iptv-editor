@@ -219,7 +219,7 @@ const Live = {
     for (const v of ch.variants) {
       const rows = v.epg && this.allEpg?.[v.epg];
       if (!rows?.length) continue;
-      const list = rows.map(([start, end, title, desc]) => ({ start, end, title, desc }));
+      const list = this.tidy(rows.map(([start, end, title, desc]) => ({ start, end, title, desc })));
       this.epgCache.set(ch.key, { t: Date.now(), list });
       return list;
     }
@@ -244,9 +244,21 @@ const Live = {
       if (list.length) break;
     }
     const since = Date.now() - 12 * 3600000;
-    list = list.filter((e) => e.end > since).sort((a, b) => a.start - b.start);
+    list = this.tidy(list.filter((e) => e.end > since));
     this.epgCache.set(ch.key, { t: Date.now(), list });
     return list;
+  },
+
+  /** O XMLTV do provedor traz programas sobrepostos e alguns com duracao absurda: fica so a sequencia limpa. */
+  tidy(list) {
+    const out = [];
+    for (const e of list.slice().sort((a, b) => a.start - b.start)) {
+      if (!e.start || e.end - e.start > 6 * 3600000 || e.end <= e.start) continue;
+      const prev = out[out.length - 1];
+      if (prev && e.start < prev.end - 60000) continue;
+      out.push(e);
+    }
+    return out;
   },
 
   nowIndex(list) {
@@ -286,69 +298,82 @@ const Live = {
     this.renderBar();
   },
 
+  /**
+   * A barra tem sempre a mesma altura e as mesmas partes, com ou sem
+   * programacao: so o conteudo muda. Sinopse longa rola devagar, em loop.
+   */
   async renderBar() {
     const s = this.barState;
     if (!s) return;
     this.armBarTimer();
     const ch = s.ch;
     const live = ch === this.cur?.ch;
-    const bar = this.ui.bar;
-    const head = h(
-      'div',
-      { class: 'lv-head' },
-      ch.logo ? h('img', { src: ch.logo, alt: '', onerror: (e) => e.target.remove() }) : null,
-      h('div', { class: 'lv-num' }, ch.num),
-      h('div', { class: 'lv-name' }, ch.name),
-      h('div', { class: `lv-tag${live ? ' live' : ''}` }, live ? 'AO VIVO' : 'OUTRO CANAL')
-    );
-    fill(bar, head, h('div', { class: 'lv-prog muted' }, 'Carregando programação…'));
+    const hm = (t) => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const day = (t) => {
+      const diff = Math.round((new Date(t).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+      return diff === 0 ? '' : diff === 1 ? 'Amanhã, ' : diff === -1 ? 'Ontem, ' : `${new Date(t).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' })}, `;
+    };
+    const paint = ({ when = '', label = '', title, desc = '', pct = null, chips = [] }) =>
+      fill(
+        this.ui.bar,
+        h(
+          'div',
+          { class: 'lv-head' },
+          h('div', { class: 'lv-logo' }, ch.logo ? h('img', { src: ch.logo, alt: '', onerror: (e) => e.target.remove() }) : null),
+          h('div', { class: 'lv-num' }, ch.num),
+          h('div', { class: 'lv-name' }, ch.name),
+          h('div', { class: `lv-tag${live ? ' live' : ''}` }, live ? 'AO VIVO' : 'OUTRO CANAL'),
+          h('div', { class: 'lv-when' }, label ? h('span', { class: 'lv-label' }, label) : null, when)
+        ),
+        h('div', { class: 'lv-title' }, title),
+        h('div', { class: 'lv-progress' }, pct == null ? null : h('i', { style: { width: `${pct * 100}%` } })),
+        h('div', { class: 'lv-desc' }, h('p', {}, desc)),
+        h('div', { class: 'lv-strip' }, chips),
+        this.hints()
+      );
 
+    paint({ title: 'Carregando programação…' });
     const list = await this.epg(ch);
     if (this.barState !== s) return;
     const base = this.nowIndex(list);
     if (!list.length || base < 0) {
-      fill(bar, head, h('div', { class: 'lv-prog muted' }, 'Sem programação para este canal.'), this.hints());
+      paint({ title: 'Sem programação disponível para este canal.' });
       return;
     }
     s.off = Math.max(-base, Math.min(list.length - 1 - base, s.off));
     const i = base + s.off;
     const e = list[i];
     const now = Date.now();
-    const hm = (t) => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const day = (t) => {
-      const d = new Date(t);
-      const today = new Date();
-      const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - today.setHours(0, 0, 0, 0)) / 86400000);
-      return diff === 0 ? '' : diff === 1 ? 'Amanhã, ' : diff === -1 ? 'Ontem, ' : `${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' })}, `;
-    };
-    const label = e.start <= now && e.end > now ? 'Agora' : e.end <= now ? 'Já passou' : s.off === 1 ? 'A seguir' : 'Mais tarde';
-    const pct = Math.min(1, Math.max(0, (now - e.start) / (e.end - e.start)));
+    const onNow = e.start <= now && e.end > now;
+    paint({
+      label: onNow ? 'Agora' : e.end <= now ? 'Já passou' : s.off === 1 ? 'A seguir' : 'Mais tarde',
+      when: `${day(e.start)}${hm(e.start)} – ${hm(e.end)}`,
+      title: e.title || 'Sem título',
+      desc: e.desc || '',
+      pct: onNow ? Math.min(1, (now - e.start) / (e.end - e.start)) : null,
+      chips: list
+        .slice(Math.max(0, i - 1), i + 4)
+        .map((x) => h('div', { class: `lv-chip${x === e ? ' on' : ''}${x.end <= now ? ' past' : ''}` }, h('b', {}, `${day(x.start)}${hm(x.start)}`), h('span', {}, x.title))),
+    });
+    this.scrollDesc();
+  },
 
-    const strip = h(
-      'div',
-      { class: 'lv-strip' },
-      list.slice(Math.max(0, i - 1), i + 4).map((x) =>
-        h('div', { class: `lv-chip${x === e ? ' on' : ''}${x.end <= now ? ' past' : ''}` }, h('b', {}, hm(x.start)), h('span', {}, x.title))
-      )
-    );
-    fill(
-      bar,
-      head,
-      h(
-        'div',
-        { class: 'lv-prog' },
-        h('div', { class: 'lv-when' }, h('span', { class: 'lv-label' }, label), `${day(e.start)}${hm(e.start)} – ${hm(e.end)}`),
-        h('div', { class: 'lv-title' }, e.title || 'Sem título'),
-        label === 'Agora' ? h('div', { class: 'lv-progress' }, h('i', { style: { width: `${pct * 100}%` } })) : null,
-        e.desc ? h('p', { class: 'lv-desc' }, e.desc) : null
-      ),
-      strip,
-      this.hints()
-    );
+  /** Sinopse maior que as duas linhas: desce devagar, para, e volta ao comeco. */
+  scrollDesc() {
+    const box = this.ui.bar.querySelector('.lv-desc');
+    const p = box?.firstChild;
+    if (!p) return;
+    requestAnimationFrame(() => {
+      const extra = p.scrollHeight - box.clientHeight;
+      if (extra <= 2) return;
+      p.style.setProperty('--lv-extra', `-${extra}px`);
+      p.style.animationDuration = `${Math.max(8, extra / 6)}s`;
+      p.classList.add('rolling');
+    });
   },
 
   hints() {
-    return h('div', { class: 'lv-hints' }, '◀ ▶  programação', h('span', {}, '▲ ▼  outros canais'), h('span', {}, 'OK  lista de canais'), h('span', {}, 'CH + / –  trocar de canal'));
+    return h('div', { class: 'lv-hints' }, '◀ ▶  programação', h('span', {}, '▲ ▼  outros canais'), h('span', {}, 'OK  assistir este canal'), h('span', {}, 'CH + / –  trocar de canal'));
   },
 
   armBarTimer() {
@@ -448,7 +473,7 @@ const Live = {
         const i = list.indexOf(s.ch);
         this.barState = { ch: list[(i + (key === 'down' ? 1 : -1) + list.length) % list.length], off: 0 };
         this.renderBar();
-      } else if (key === 'ok') this.openList(s.ch);
+      } else if (key === 'ok') this.play(s.ch);
       return true;
     }
     if (key === 'down') this.openBar();

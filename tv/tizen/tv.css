@@ -111,8 +111,12 @@ body.tv #player.is-live .p-back {
   right: 0;
   bottom: 0;
   z-index: 5;
-  padding: 2.2rem var(--gutter) 2.4rem;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 60%, rgba(0, 0, 0, 0));
+  /* Altura fixa (~1/4 da tela), com ou sem programacao. */
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  padding: 26px 64px 18px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.94) 72%, rgba(0, 0, 0, 0));
   transform: translateY(110%);
   transition: transform 0.25s ease;
 }
@@ -124,34 +128,47 @@ body.tv #player.is-live .p-back {
 .lv-head {
   display: flex;
   align-items: center;
-  gap: 1.2rem;
-  margin-bottom: 1rem;
+  gap: 14px;
+  height: 40px;
+  flex: none;
 }
 
-.lv-head img {
-  height: 3.2rem;
-  max-width: 7rem;
+.lv-logo {
+  width: 62px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+}
+
+.lv-logo {
+  overflow: hidden;
+}
+
+.lv-logo img {
+  width: 62px !important;
+  height: 36px !important;
   object-fit: contain;
 }
 
 .lv-num {
-  font-size: 1.6rem;
+  font-size: 24px;
   font-weight: 800;
   color: var(--accent);
-  min-width: 2.6rem;
+  min-width: 36px;
 }
 
 .lv-name {
-  font-size: 1.6rem;
+  font-size: 24px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .lv-tag {
-  font-size: 0.85rem;
+  font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.12em;
-  padding: 0.3rem 0.7rem;
-  border-radius: 0.4rem;
+  padding: 4px 9px;
+  border-radius: 5px;
   background: rgba(255, 255, 255, 0.18);
 }
 
@@ -159,16 +176,14 @@ body.tv #player.is-live .p-back {
   background: #e50914;
 }
 
-.lv-prog {
-  max-width: 70rem;
-}
-
 .lv-when {
-  font-size: 1.15rem;
+  margin-left: auto;
+  font-size: 18px;
   color: var(--muted);
   display: flex;
-  gap: 0.9rem;
+  gap: 12px;
   align-items: center;
+  white-space: nowrap;
 }
 
 .lv-label {
@@ -176,22 +191,33 @@ body.tv #player.is-live .p-back {
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 1rem;
+  font-size: 15px;
 }
 
 .lv-title {
-  font-size: 2.3rem;
+  flex: none;
+  height: 44px;
+  margin-top: 8px;
+  font-size: 32px;
+  line-height: 44px;
   font-weight: 800;
-  margin: 0.25rem 0 0.6rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lv-progress {
-  height: 0.4rem;
+  flex: none;
+  height: 5px;
+  width: 420px;
+  margin: 4px 0 8px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.18);
   overflow: hidden;
-  max-width: 34rem;
-  margin-bottom: 0.7rem;
+}
+
+.lv-progress:empty {
+  visibility: hidden;
 }
 
 .lv-progress i {
@@ -200,37 +226,59 @@ body.tv #player.is-live .p-back {
   background: var(--accent);
 }
 
+/* Duas linhas fixas; texto maior rola sozinho. */
 .lv-desc {
-  font-size: 1.15rem;
-  line-height: 1.45;
-  color: #d6d6de;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  flex: none;
+  height: 52px;
+  max-width: 1300px;
   overflow: hidden;
 }
 
+.lv-desc p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 26px;
+  color: #d6d6de;
+}
+
+.lv-desc p.rolling {
+  animation: lv-roll linear infinite;
+}
+
+@keyframes lv-roll {
+  0%,
+  18% {
+    transform: translateY(0);
+  }
+  82%,
+  100% {
+    transform: translateY(var(--lv-extra));
+  }
+}
+
 .lv-strip {
+  flex: none;
+  height: 38px;
   display: flex;
-  gap: 0.8rem;
-  margin-top: 1.3rem;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .lv-chip {
-  flex: 0 1 18rem;
+  flex: 0 1 300px;
   min-width: 0;
-  padding: 0.6rem 0.9rem;
-  border-radius: 0.6rem;
+  padding: 0 14px;
+  line-height: 38px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
-  font-size: 1rem;
+  font-size: 16px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .lv-chip b {
-  margin-right: 0.6rem;
+  margin-right: 8px;
   color: var(--muted);
 }
 
@@ -248,11 +296,12 @@ body.tv #player.is-live .p-back {
 }
 
 .lv-hints {
-  margin-top: 1.2rem;
-  font-size: 0.95rem;
+  flex: none;
+  margin-top: auto;
+  font-size: 14px;
   color: var(--muted);
   display: flex;
-  gap: 2.4rem;
+  gap: 36px;
 }
 
 /* Lista de canais na direita */
