@@ -86,12 +86,14 @@ body.tv.playing #toast:not(.show) {
   visibility: hidden;
 }
 
+/* O <object> so da acesso ao AVPlay; a area do video vem do setDisplayRect.
+   Em tamanho de tela, a TV desenhava um quadradinho branco no meio dele. */
 #avplayer {
   position: absolute;
   left: 0;
   top: 0;
-  width: 100%;
-  height: 100%;
+  width: 1px;
+  height: 1px;
 }
 
 /* ------------------------------------------------------- ao vivo na TV */
