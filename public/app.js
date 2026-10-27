@@ -228,6 +228,9 @@ function renderTabs() {
 }
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
+// no celular as pastas ficam numa gaveta; escolher uma pasta fecha a gaveta
+function closeDrawer() { document.body.classList.remove('drawer-open'); }
+
 function renderCats() {
   ensureUncat(kind);
   const ul = $('#cat-list');
@@ -238,11 +241,14 @@ function renderCats() {
   const all = el('li', curCat === 'all' ? 'active' : '');
   all.append(el('span', 'grip', ' '), el('span', 'cname', 'Todos os itens'),
              el('span', 'cnum', catalog[kind].length.toLocaleString('pt-BR')));
-  all.addEventListener('click', () => { curCat = 'all'; clearSel(); renderCats(); renderList(); });
+  all.addEventListener('click', () => { curCat = 'all'; clearSel(); renderCats(); renderList(); closeDrawer(); });
   bindCatDrop(all, null);
   ul.append(all);
 
   const visiveis = [];  // o que esta a vista, para o shift funcionar com filtro
+
+  const atual = catsOf(kind).find((c) => c.id === curCat);
+  $('#cur-folder').textContent = atual ? atual.name : 'Todos os itens';
 
   catsOf(kind).forEach((c, i) => {
     if (filter && !c.name.toLowerCase().includes(filter)) return;
@@ -278,7 +284,7 @@ function renderCats() {
       // fora dele, abrir a pasta já a deixa pronta para a barra de edição
       curCat = c.id;
       selCats.clear(); selCats.add(c.id);
-      clearSel(); renderCats(); renderList();
+      clearSel(); renderCats(); renderList(); closeDrawer();
     });
     li.addEventListener('dblclick', () => renameCat(c));
 
@@ -1381,6 +1387,8 @@ $('#btn-selmode').addEventListener('click', () => {
 });
 
 $('#btn-new-cat').addEventListener('click', newCat);
+$('#btn-folders').addEventListener('click', () => document.body.classList.add('drawer-open'));
+$('#drawer-shade').addEventListener('click', closeDrawer);
 
 document.querySelector('.subbar').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-cact]');

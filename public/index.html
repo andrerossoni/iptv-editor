@@ -34,11 +34,11 @@
 
     <div class="top-actions">
       <button id="btn-selmode" title="Ligar/desligar a seleção de vários de uma vez">
-        ☑️ Seleção múltipla
+        ☑️ <span class="label">Seleção múltipla</span>
       </button>
       <span class="sync-info" id="sync-info"></span>
-      <button id="btn-sync" class="ghost" title="Rebaixar o catálogo do provedor">↻ Sincronizar</button>
-      <button id="btn-link" class="ghost">🔗 Meu link</button>
+      <button id="btn-sync" class="ghost" title="Rebaixar o catálogo do provedor">↻ <span class="label">Sincronizar</span></button>
+      <button id="btn-link" class="ghost">🔗 <span class="label">Meu link</span></button>
       <button id="btn-publish" class="primary">Publicar</button>
     </div>
   </header>
@@ -61,7 +61,8 @@
 
   <main class="layout">
 
-    <!-- Pastas -->
+    <!-- Pastas (no celular vira uma gaveta que abre pelo botão "Pastas") -->
+    <div class="drawer-shade" id="drawer-shade"></div>
     <aside class="sidebar">
       <div class="side-head">
         <label class="chk" title="Selecionar todas as pastas à vista">
@@ -81,6 +82,7 @@
     <!-- Itens -->
     <section class="content">
       <div class="toolbar">
+        <button id="btn-folders" class="only-mobile" title="Escolher a pasta">📁 <span id="cur-folder">Pastas</span></button>
         <input type="search" id="item-search" placeholder="Buscar nesta pasta…">
         <label class="chk"><input type="checkbox" id="show-hidden"> Mostrar ocultos</label>
         <span class="spacer"></span>
