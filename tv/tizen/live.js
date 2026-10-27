@@ -21,6 +21,82 @@ function xmltvTime(s) {
   return utc - offset;
 }
 
+/** Guias publicos de TV do Brasil (XMLTV atualizado todo dia), na ordem de preferencia. */
+const EPG_SOURCES = [
+  { name: 'BrazilTVEPG', url: 'https://raw.githubusercontent.com/limaalef/BrazilTVEPG/main/epg.xml' },
+  { name: 'Claro', url: 'https://raw.githubusercontent.com/limaalef/BrazilTVEPG/main/claro.xml' },
+];
+
+/** Nome de canal para cruzar entre fontes: sem qualidade, acento, "TV", "Brasil" etc. */
+function epgKey(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[¹²³]/g, '')
+    .replace(/\+/g, ' plus ')
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+    .replace(/\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc|br|brasil|brazil|canal|channel|tv)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b0+(\d)/g, '$1')
+    .trim();
+}
+
+/** Jeitos de o mesmo canal aparecer nos guias ("TC Pipoca" = "Telecine Pipoca", "SBT SP" = "SBT" de Sao Paulo). */
+function epgAliases(name) {
+  const k = epgKey(name);
+  return [...new Set([k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim()])].filter(Boolean);
+}
+
+const xmlText = (s) =>
+  String(s || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    .replace(/&amp;/g, '&')
+    .trim();
+
+/**
+ * Le um XMLTV com expressoes regulares (bem mais leve que montar o XML
+ * inteiro na memoria da TV). Guarda so de 12h atras ate 3 dias a frente.
+ */
+function parseXmltv(xml) {
+  const names = new Map();
+  for (const m of xml.matchAll(/<channel\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/g)) {
+    for (const d of m[2].matchAll(/<display-name[^>]*>([^<]+)</g)) {
+      // "Sao Paulo/SP  Record HD" -> "record sp" e "record"
+      const raw = xmlText(d[1]);
+      const city = raw.match(/^.*?\/([A-Z]{2})\s+(.*)$/);
+      const keys = city ? [`${epgKey(city[2])} ${city[1].toLowerCase()}`, epgKey(city[2])] : [epgKey(raw)];
+      for (const k of keys) if (k && !names.has(k)) names.set(k, m[1]);
+    }
+  }
+  const since = Date.now() - 12 * 3600000;
+  const until = Date.now() + 3 * 86400000;
+  const progs = new Map();
+  for (const m of xml.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
+    const attr = (n) => (m[1].match(new RegExp(`\\b${n}="([^"]+)"`)) || [])[1];
+    const end = xmltvTime(attr('stop'));
+    const start = xmltvTime(attr('start'));
+    if (end < since || start > until) continue;
+    const title = xmlText((m[2].match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1]);
+    const desc = xmlText((m[2].match(/<desc[^>]*>([\s\S]*?)<\/desc>/) || [])[1]);
+    const id = attr('channel');
+    if (!progs.has(id)) progs.set(id, []);
+    progs.get(id).push([start, end, title, desc]);
+  }
+  return { names, progs };
+}
+
+/** A fonte so vale para o canal se tiver o programa de agora e mais alguns pela frente. */
+function hasNow(rows) {
+  const now = Date.now();
+  return rows.some(([s, e]) => s <= now && e > now) && rows.filter(([s]) => s > now && s < now + 86400000).length >= 2;
+}
+
 const QUALITY = /\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b/gi;
 
 const Live = {
@@ -175,36 +251,60 @@ const Live = {
   /* ------------------------------------------------------ programacao */
 
   /**
-   * Programacao de todos os canais de uma vez (XMLTV, ~2 MB): baixada em
-   * segundo plano ao abrir e a cada 3 horas, e guardada na TV. Assim a barra e
-   * a lista mostram a programacao na hora, sem esperar pelo servidor.
+   * Programacao de todos os canais, baixada em segundo plano ao abrir e a
+   * cada 12 horas, e guardada na TV — a barra e a lista nunca esperam.
+   *
+   * Fontes, na ordem de preferencia: guias publicos de TV do Brasil (mais
+   * completos e detalhados, principalmente esportes) e, por ultimo, a
+   * programacao do proprio provedor. Para cada canal fica a primeira fonte
+   * que tiver a grade de agora; os nomes sao cruzados por EPG_ALIASES.
    */
   allEpg: null,
 
   async loadAll() {
-    const cached = await native.cacheGet('epg-all').catch(() => null);
+    const cached = await native.cacheGet('epg-guide').catch(() => null);
     if (cached?.by) this.useAll(cached);
-    if (cached && Date.now() - cached.at < 3 * 3600000) return;
-    try {
-      const q = new URLSearchParams({ username: Data.cfg.user, password: Data.cfg.pass });
-      const res = await fetch(`${Data.cfg.server}/xmltv.php?${q}`);
-      if (!res.ok) return;
-      const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
-      const since = Date.now() - 12 * 3600000;
-      const by = {};
-      for (const p of xml.getElementsByTagName('programme')) {
-        const end = xmltvTime(p.getAttribute('stop'));
-        if (end < since) continue;
-        const text = (tag) => p.getElementsByTagName(tag)[0]?.textContent || '';
-        (by[p.getAttribute('channel')] ||= []).push([xmltvTime(p.getAttribute('start')), end, text('title'), text('desc')]);
+    if (cached && Date.now() - cached.at < 12 * 3600000) return;
+    const q = new URLSearchParams({ username: Data.cfg.user, password: Data.cfg.pass });
+    const sources = [...EPG_SOURCES, { name: 'provedor', url: `${Data.cfg.server}/xmltv.php?${q}`, byId: true }];
+    const list = this.build();
+    // Primeiro junta o que cada fonte tem de cada canal; depois escolhe.
+    const found = {};
+    for (const src of sources) {
+      let xml;
+      try {
+        const res = await fetch(src.url);
+        if (!res.ok) continue;
+        xml = await res.text();
+      } catch {
+        continue;
       }
-      for (const list of Object.values(by)) list.sort((a, b) => a[0] - b[0]);
-      const data = { at: Date.now(), by };
-      native.cacheSet('epg-all', data);
-      this.useAll(data);
-    } catch (err) {
-      console.warn('EPG completo falhou', err);
+      const guide = parseXmltv(xml);
+      xml = null;
+      for (const ch of list) {
+        const ids = src.byId ? ch.variants.map((v) => v.epg).filter(Boolean) : epgAliases(ch.name).map((k) => guide.names.get(k)).filter(Boolean);
+        const rows = ids.map((id) => guide.progs.get(id)).find((r) => r?.length);
+        if (rows) (found[ch.key] ||= []).push({ src: src.name, rows });
+      }
     }
+    // Grade completa de agora > pelo menos o programa de agora > qualquer coisa nas proximas 24h.
+    const now = Date.now();
+    const tests = [hasNow, (r) => r.some(([s, e]) => s <= now && e > now), (r) => r.some(([s]) => s > now && s < now + 86400000)];
+    const by = {};
+    const from = {};
+    for (const [key, cands] of Object.entries(found)) {
+      for (const test of tests) {
+        const pick = cands.find((c) => test(c.rows));
+        if (pick) {
+          by[key] = pick.rows;
+          from[key] = pick.src;
+          break;
+        }
+      }
+    }
+    const data = { at: Date.now(), by, from };
+    native.cacheSet('epg-guide', data);
+    this.useAll(data);
   },
 
   useAll(data) {
@@ -216,9 +316,8 @@ const Live = {
     const hit = this.epgCache.get(ch.key);
     if (hit && Date.now() - hit.t < 10 * 60000) return hit.list;
     // Primeiro a programacao completa ja baixada; so pede ao servidor o canal que nao estiver nela.
-    for (const v of ch.variants) {
-      const rows = v.epg && this.allEpg?.[v.epg];
-      if (!rows?.length) continue;
+    const rows = this.allEpg?.[ch.key];
+    if (rows?.length) {
       const list = this.tidy(rows.map(([start, end, title, desc]) => ({ start, end, title, desc })));
       this.epgCache.set(ch.key, { t: Date.now(), list });
       return list;
