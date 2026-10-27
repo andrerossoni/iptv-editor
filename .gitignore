@@ -5,3 +5,5 @@ node_modules/
 *.log
 MEUS-DADOS.txt
 wrangler.toml
+tv/node_modules/
+tv/dist/

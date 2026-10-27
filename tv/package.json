@@ -1,0 +1,22 @@
+{
+  "name": "iptv-cinema",
+  "productName": "IPTV Cinema",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Player estilo Netflix para a lista publicada pelo IPTV Editor",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-packager . \"IPTV Cinema\" --platform=darwin --arch=arm64 --out=dist --overwrite --icon=icon.icns --ignore=^/dist"
+  },
+  "dependencies": {
+    "hls.js": "^1.5.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.0",
+    "electron": "^38.0.0"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true
+  }
+}

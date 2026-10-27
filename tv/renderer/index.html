@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>IPTV Cinema</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header id="topbar">
+      <button id="back" class="icon-btn" aria-label="Voltar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.4 4.6 14 3.2 5.2 12l8.8 8.8 1.4-1.4L8 12z" /></svg>
+      </button>
+      <div class="brand">CINEMA</div>
+      <nav id="nav">
+        <button data-view="home">Início</button>
+        <button data-view="movies">Filmes</button>
+        <button data-view="series">Séries</button>
+        <button data-view="live">Ao Vivo</button>
+        <button data-view="mylist">Minha Lista</button>
+      </nav>
+      <div class="spacer"></div>
+      <button data-view="search" class="icon-btn" aria-label="Buscar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.39-1.42 1.42-5.39-5.39A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z" /></svg>
+      </button>
+      <button data-view="settings" class="icon-btn" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)" /></svg>
+      </button>
+    </header>
+
+    <main id="view"></main>
+
+    <div id="player" hidden>
+      <video id="video" playsinline></video>
+      <div class="p-spinner"><div class="spinner"></div></div>
+
+      <div class="p-ui">
+        <div class="p-top">
+          <button class="p-back btn">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.4 4.6 14 3.2 5.2 12l8.8 8.8 1.4-1.4L8 12z" /></svg>
+            <span>Voltar</span>
+          </button>
+          <div class="p-titles">
+            <div class="p-title"></div>
+            <div class="p-sub"></div>
+          </div>
+        </div>
+
+        <button class="p-bigplay" aria-label="Tocar ou pausar"></button>
+
+        <div class="p-bottom">
+          <div class="p-bar">
+            <div class="p-buf"></div>
+            <div class="p-fill"></div>
+            <div class="p-hover"></div>
+          </div>
+          <div class="p-row">
+            <button class="p-btn p-rw" aria-label="Voltar 10 segundos"></button>
+            <button class="p-btn p-play big" aria-label="Tocar ou pausar"></button>
+            <button class="p-btn p-ff" aria-label="Avançar 30 segundos"></button>
+            <div class="p-time"></div>
+            <div class="spacer"></div>
+            <button class="p-btn wide p-nextbtn"><span class="ico"></span><span>Próximo episódio</span></button>
+            <button class="p-btn wide p-chbtn"><span class="ico"></span><span>Canais</span></button>
+            <button class="p-btn p-vol" aria-label="Som"></button>
+            <button class="p-btn p-fs" aria-label="Tela cheia"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-side"></div>
+
+      <div class="p-nextcard">
+        <div class="p-nc-label">Próximo episódio em <b class="p-nc-count">10</b></div>
+        <div class="p-nc-title"></div>
+        <div class="actions">
+          <button class="btn primary p-nc-go">Assistir agora</button>
+          <button class="btn p-nc-cancel">Cancelar</button>
+        </div>
+      </div>
+
+      <div class="p-error">
+        <p class="p-err-msg"></p>
+        <div class="actions">
+          <button class="btn primary p-err-retry">Tentar de novo</button>
+          <button class="btn p-err-close">Voltar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script src="../node_modules/hls.js/dist/hls.min.js"></script>
+    <script src="util.js"></script>
+    <script>
+      // Os icones dos botoes do player vem do mesmo conjunto usado nas telas.
+      document.querySelector('.p-rw').innerHTML = ICON.back10;
+      document.querySelector('.p-ff').innerHTML = ICON.fwd30;
+      document.querySelector('.p-play').innerHTML = ICON.pause;
+      document.querySelector('.p-bigplay').innerHTML = ICON.pause;
+      document.querySelector('.p-vol').innerHTML = ICON.volume;
+      document.querySelector('.p-fs').innerHTML = ICON.expand;
+      document.querySelector('.p-nextbtn .ico').innerHTML = ICON.next;
+      document.querySelector('.p-chbtn .ico').innerHTML = ICON.list;
+    </script>
+    <script src="data.js"></script>
+    <script src="trends.js"></script>
+    <script src="player.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
