@@ -1,0 +1,342 @@
+/* Na TV nao ha mouse: o foco do controle faz o papel do "passar o mouse". */
+
+body.tv *:focus {
+  outline: none;
+}
+
+body.tv #nav button.tv-focus,
+body.tv .icon-btn.tv-focus {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+body.tv .chip.tv-focus {
+  background: var(--accent);
+  color: var(--accent-ink);
+  transform: scale(1.08);
+}
+
+body.tv .btn.tv-focus {
+  background: rgba(150, 150, 165, 0.6);
+  transform: scale(1.06);
+  box-shadow: 0 0 0 0.25rem var(--accent);
+}
+
+body.tv .btn.primary.tv-focus {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 0.3rem rgba(255, 176, 32, 0.35);
+}
+
+body.tv .hero-dots button.tv-focus {
+  transform: scale(1.6);
+  background: var(--accent);
+}
+
+body.tv .card.tv-focus {
+  transform: scale(1.09);
+  z-index: 2;
+}
+
+body.tv .card.tv-focus .card-img {
+  outline-color: var(--accent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65);
+}
+
+body.tv .episode.tv-focus {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 0.22rem var(--accent);
+}
+
+body.tv .episode.tv-focus .ep-play {
+  opacity: 1;
+}
+
+body.tv .p-btn.tv-focus,
+body.tv .p-back.tv-focus {
+  background: var(--accent);
+  color: var(--accent-ink);
+  transform: scale(1.1);
+}
+
+body.tv .p-ch.tv-focus {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+body.tv input.tv-focus {
+  box-shadow: 0 0 0 0.25rem var(--accent);
+}
+
+/* As setas das fileiras sao para mouse; no controle a fileira anda sozinha. */
+body.tv .row-wrap .arrow {
+  display: none;
+}
+
+/* O AVPlay desenha o video num plano abaixo da pagina: enquanto ele toca,
+   tudo que fica por tras dos controles precisa ser transparente. */
+html.tv-playing,
+body.tv.playing,
+body.tv.playing #player {
+  background: transparent !important;
+}
+
+body.tv.playing #view,
+body.tv.playing #topbar,
+body.tv.playing #toast:not(.show) {
+  visibility: hidden;
+}
+
+#avplayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ------------------------------------------------------- ao vivo na TV */
+
+/* Sem pausar nem avancar no ao vivo: so o titulo e a programacao em cima. */
+body.tv #player.is-live .p-bigplay,
+body.tv #player.is-live .p-bottom,
+body.tv #player.is-live .p-back {
+  display: none;
+}
+
+.lv-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  padding: 2.2rem var(--gutter) 2.4rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 60%, rgba(0, 0, 0, 0));
+  transform: translateY(110%);
+  transition: transform 0.25s ease;
+}
+
+.lv-bar.on {
+  transform: none;
+}
+
+.lv-head {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.lv-head img {
+  height: 3.2rem;
+  max-width: 7rem;
+  object-fit: contain;
+}
+
+.lv-num {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--accent);
+  min-width: 2.6rem;
+}
+
+.lv-name {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.lv-tag {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  padding: 0.3rem 0.7rem;
+  border-radius: 0.4rem;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.lv-tag.live {
+  background: #e50914;
+}
+
+.lv-prog {
+  max-width: 70rem;
+}
+
+.lv-when {
+  font-size: 1.15rem;
+  color: var(--muted);
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+}
+
+.lv-label {
+  color: var(--accent);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 1rem;
+}
+
+.lv-title {
+  font-size: 2.3rem;
+  font-weight: 800;
+  margin: 0.25rem 0 0.6rem;
+}
+
+.lv-progress {
+  height: 0.4rem;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  max-width: 34rem;
+  margin-bottom: 0.7rem;
+}
+
+.lv-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.lv-desc {
+  font-size: 1.15rem;
+  line-height: 1.45;
+  color: #d6d6de;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lv-strip {
+  display: flex;
+  gap: 0.8rem;
+  margin-top: 1.3rem;
+}
+
+.lv-chip {
+  flex: 0 1 18rem;
+  min-width: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-chip b {
+  margin-right: 0.6rem;
+  color: var(--muted);
+}
+
+.lv-chip.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.lv-chip.on b {
+  color: inherit;
+}
+
+.lv-chip.past {
+  opacity: 0.55;
+}
+
+.lv-hints {
+  margin-top: 1.2rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  display: flex;
+  gap: 2.4rem;
+}
+
+/* Lista de canais na direita */
+.lv-list {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 34rem;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 10, 13, 0.94);
+  transform: translateX(105%);
+  transition: transform 0.22s ease;
+}
+
+.lv-list.on {
+  transform: none;
+}
+
+.lv-list-head {
+  padding: 2rem 1.8rem 1rem;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.lv-items {
+  flex: 1;
+  overflow: hidden;
+  padding: 0 0.8rem 2rem;
+}
+
+.lv-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-radius: 0.6rem;
+}
+
+.lv-row img,
+.lv-row > i {
+  width: 4rem;
+  height: 2.4rem;
+  object-fit: contain;
+  flex: none;
+}
+
+.lv-row .lv-num {
+  font-size: 1.15rem;
+  min-width: 2.2rem;
+  text-align: right;
+}
+
+.lv-row-text {
+  min-width: 0;
+}
+
+.lv-row .lv-name {
+  font-size: 1.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-now {
+  font-size: 0.95rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-row.current .lv-name::after {
+  content: '  •  agora';
+  color: #e50914;
+  font-size: 0.9rem;
+}
+
+.lv-row.sel {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.lv-row.sel .lv-num,
+.lv-row.sel .lv-now {
+  color: inherit;
+}

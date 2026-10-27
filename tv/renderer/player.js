@@ -16,7 +16,8 @@ const Player = {
 
   init() {
     this.el = $('#player');
-    this.video = $('#video');
+    // Na TV o tizen/avplay-video.js troca o <video> pelo player nativo da Samsung.
+    this.video = window.TvVideo || $('#video');
     const v = this.video;
     const q = (s) => this.el.querySelector(s);
 
@@ -139,6 +140,8 @@ const Player = {
       this.hls.attachMedia(v);
       this.loadEpg();
     } else {
+      // Sem hls.js (TV): o player nativo toca o HLS sozinho.
+      if (opts.kind === 'live') this.loadEpg();
       v.src = opts.url;
       if (opts.startAt > 5) {
         v.addEventListener(
@@ -279,6 +282,17 @@ const Player = {
 
   onError() {
     if (this.session?.kind === 'live' && this.hls) return;
+    // Ao vivo sem hls.js: o provedor recusa por alguns segundos enquanto a conexao anterior fecha.
+    const s = this.session;
+    if (s?.kind === 'live' && (s.tries || 0) < 4) {
+      s.tries = (s.tries || 0) + 1;
+      setTimeout(() => {
+        if (this.session !== s) return;
+        this.video.src = s.url;
+        this.video.play().catch(() => {});
+      }, 2500);
+      return;
+    }
     const err = this.video.error;
     if (!err || !this.session) return;
     const msg =

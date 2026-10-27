@@ -1,0 +1,517 @@
+/**
+ * Ao vivo na TV: uma lista unica de canais, na ordem da sua lista, sem pastas
+ * e sem "HD/FHD" repetido. Cada canal pode ter varias versoes; o app escolhe
+ * sozinho a que abre mais rapido (e aprende com o uso), e se uma falhar ou
+ * demorar, passa para a proxima sem voce perceber.
+ *
+ * Controle no canal:
+ *   CH+ / CH-  troca de canal (o unico jeito de trocar sem abrir a lista)
+ *   ↓          barra de programacao; nela ← → andam no horario e ↑ ↓ espiam
+ *              outros canais sem trocar
+ *   OK         lista de canais a direita; OK nela troca para o escolhido
+ *   Voltar     fecha a barra/lista, ou sai do canal
+ */
+
+/** "20261027190500 -0300" -> milissegundos. */
+function xmltvTime(s) {
+  const m = String(s || '').match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\s*([+-])(\d\d)(\d\d)/);
+  if (!m) return 0;
+  const utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  const offset = (+m[8] * 60 + +m[9]) * 60000 * (m[7] === '-' ? -1 : 1);
+  return utc - offset;
+}
+
+const QUALITY = /\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b/gi;
+
+const Live = {
+  channels: [],
+  builtFrom: null,
+  cur: null,
+  stats: store.get('live-stats', {}),
+  epgCache: new Map(),
+
+  /* ---------------------------------------------------------- canais */
+
+  /** Junta as versoes do mesmo canal: "HBO HD" e "HBO FHD" viram "HBO". */
+  build() {
+    if (this.builtFrom === Data.items.live) return this.channels;
+    this.builtFrom = Data.items.live;
+    const byBase = new Map();
+    const list = [];
+    for (const cat of Data.cats.live) {
+      for (const it of cat.items) {
+        const base = this.baseKey(it.name);
+        let ch = byBase.get(base);
+        if (!ch) {
+          ch = { key: `ch:${base}`, name: this.baseName(it.name), logo: '', variants: [] };
+          byBase.set(base, ch);
+          list.push(ch);
+        }
+        ch.variants.push(it);
+        ch.logo ||= it.poster;
+      }
+    }
+    list.forEach((ch, i) => (ch.num = i + 1));
+    this.byVariant = new Map(list.flatMap((ch) => ch.variants.map((v) => [v.key, ch])));
+    return (this.channels = list);
+  },
+
+  baseKey(name) {
+    const s = String(name || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/\+/g, ' plus ')
+      .replace(QUALITY, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\b0+(\d)/g, '$1')
+      .trim();
+    return s || String(name);
+  },
+
+  baseName(name) {
+    return String(name).replace(QUALITY, ' ').replace(/\s*-\s*$/, '').replace(/\s+-\s+(?=\d)/, ' ').replace(/\s+/g, ' ').trim() || name;
+  },
+
+  find(item) {
+    this.build();
+    return this.byVariant.get(item.key) || this.channels.find((c) => c.key === item.key) || null;
+  },
+
+  /* ------------------------------------------- escolha da melhor versao */
+
+  quality(v) {
+    const n = v.name;
+    if (/\b(uhd|4k)\b/i.test(n)) return 2.5; // pesado demais para a rede de casa
+    if (/\bsd\b/i.test(n)) return 1.2; // abre rapido, mas imagem fraca
+    if (/\b(fhd|full\s*hd)\b/i.test(n)) return 0.4;
+    if (/\bhd\b/i.test(n)) return 0;
+    return 0.3;
+  },
+
+  /** Nota de cada versao: tempo medio para abrir + falhas recentes + peso da qualidade. Menor e melhor. */
+  score(v) {
+    const st = this.stats[v.id] || {};
+    return (st.n ? st.avg : 3) + (st.fails || 0) * 4 + this.quality(v);
+  },
+
+  ranked(ch) {
+    return ch.variants.slice().sort((a, b) => this.score(a) - this.score(b));
+  },
+
+  record(v, ok, seconds) {
+    const st = (this.stats[v.id] ||= { n: 0, avg: 0, fails: 0 });
+    if (ok) {
+      st.avg = st.n ? st.avg * 0.7 + seconds * 0.3 : seconds;
+      st.n++;
+      st.fails = Math.max(0, st.fails - 0.5);
+    } else st.fails = Math.min(5, st.fails + 1);
+    store.set('live-stats', this.stats);
+  },
+
+  /* ------------------------------------------------------------ tocar */
+
+  play(ch) {
+    this.build();
+    this.closeOverlays();
+    this.cur = { ch, order: this.ranked(ch), i: 0, cycle: 0 };
+    Watch.touch(ch.variants[0]);
+    this.openVariant();
+  },
+
+  openVariant() {
+    const c = this.cur;
+    const v = c.order[c.i];
+    clearTimeout(c.timer);
+    c.ok = false;
+    c.t0 = Date.now();
+    Player.open({
+      kind: 'live',
+      title: `${c.ch.num}   ${c.ch.name}`,
+      sub: '',
+      url: Data.streamUrl('live', v.id, 'm3u8'),
+      key: v.key,
+      streamId: v.id,
+      onClose: () => {
+        clearTimeout(this.cur?.timer);
+        this.cur = null;
+        this.closeOverlays();
+        App.refresh();
+      },
+    });
+    // Demorou demais para abrir: tenta a proxima versao.
+    c.timer = setTimeout(() => this.cur === c && !c.ok && this.fail(), 9000);
+  },
+
+  started() {
+    const c = this.cur;
+    if (!c || c.ok || Player.session?.key !== c.order[c.i].key) return;
+    c.ok = true;
+    clearTimeout(c.timer);
+    this.record(c.order[c.i], true, (Date.now() - c.t0) / 1000);
+  },
+
+  fail() {
+    const c = this.cur;
+    if (!c) return;
+    this.record(c.order[c.i], false);
+    c.i++;
+    if (c.i < c.order.length) return this.openVariant();
+    // Todas falharam: o provedor costuma recusar por alguns segundos depois de uma troca.
+    if (c.cycle++ < 1) {
+      c.i = 0;
+      return setTimeout(() => this.cur === c && this.openVariant(), 2500);
+    }
+    Player.showError('O canal não respondeu. Ele pode estar fora do ar agora.');
+    Player.ui.error.querySelector('.p-err-retry').onclick = () => this.play(c.ch);
+  },
+
+  step(dir) {
+    const list = this.build();
+    const i = list.indexOf(this.cur.ch);
+    this.play(list[(i + dir + list.length) % list.length]);
+  },
+
+  /* ------------------------------------------------------ programacao */
+
+  /**
+   * Programacao de todos os canais de uma vez (XMLTV, ~2 MB): baixada em
+   * segundo plano ao abrir e a cada 3 horas, e guardada na TV. Assim a barra e
+   * a lista mostram a programacao na hora, sem esperar pelo servidor.
+   */
+  allEpg: null,
+
+  async loadAll() {
+    const cached = await native.cacheGet('epg-all').catch(() => null);
+    if (cached?.by) this.useAll(cached);
+    if (cached && Date.now() - cached.at < 3 * 3600000) return;
+    try {
+      const q = new URLSearchParams({ username: Data.cfg.user, password: Data.cfg.pass });
+      const res = await fetch(`${Data.cfg.server}/xmltv.php?${q}`);
+      if (!res.ok) return;
+      const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+      const since = Date.now() - 12 * 3600000;
+      const by = {};
+      for (const p of xml.getElementsByTagName('programme')) {
+        const end = xmltvTime(p.getAttribute('stop'));
+        if (end < since) continue;
+        const text = (tag) => p.getElementsByTagName(tag)[0]?.textContent || '';
+        (by[p.getAttribute('channel')] ||= []).push([xmltvTime(p.getAttribute('start')), end, text('title'), text('desc')]);
+      }
+      for (const list of Object.values(by)) list.sort((a, b) => a[0] - b[0]);
+      const data = { at: Date.now(), by };
+      native.cacheSet('epg-all', data);
+      this.useAll(data);
+    } catch (err) {
+      console.warn('EPG completo falhou', err);
+    }
+  },
+
+  useAll(data) {
+    this.allEpg = data.by;
+    this.epgCache.clear();
+  },
+
+  async epg(ch) {
+    const hit = this.epgCache.get(ch.key);
+    if (hit && Date.now() - hit.t < 10 * 60000) return hit.list;
+    // Primeiro a programacao completa ja baixada; so pede ao servidor o canal que nao estiver nela.
+    for (const v of ch.variants) {
+      const rows = v.epg && this.allEpg?.[v.epg];
+      if (!rows?.length) continue;
+      const list = rows.map(([start, end, title, desc]) => ({ start, end, title, desc }));
+      this.epgCache.set(ch.key, { t: Date.now(), list });
+      return list;
+    }
+    // Com a programacao completa em maos, canal que nao esta nela simplesmente nao tem programacao.
+    if (this.allEpg) {
+      this.epgCache.set(ch.key, { t: Date.now(), list: [] });
+      return [];
+    }
+    const dec = (s) => {
+      try {
+        return decodeURIComponent(escape(atob(s || '')));
+      } catch {
+        return s || '';
+      }
+    };
+    let list = [];
+    for (const v of this.ranked(ch)) {
+      try {
+        const d = await Data.api('get_simple_data_table', { stream_id: v.id });
+        list = (d.epg_listings || []).map((e) => ({ title: dec(e.title), desc: dec(e.description), start: +e.start_timestamp * 1000, end: +e.stop_timestamp * 1000 }));
+      } catch {}
+      if (list.length) break;
+    }
+    const since = Date.now() - 12 * 3600000;
+    list = list.filter((e) => e.end > since).sort((a, b) => a.start - b.start);
+    this.epgCache.set(ch.key, { t: Date.now(), list });
+    return list;
+  },
+
+  nowIndex(list) {
+    const now = Date.now();
+    const i = list.findIndex((e) => e.start <= now && e.end > now);
+    return i >= 0 ? i : list.findIndex((e) => e.start > now);
+  },
+
+  /* ------------------------------------------------- barra de baixo */
+
+  ui: null,
+
+  mount() {
+    if (this.ui) return;
+    const bar = h('div', { class: 'lv-bar' });
+    const side = h('div', { class: 'lv-list' }, h('div', { class: 'lv-list-head' }, 'Canais'), h('div', { class: 'lv-items' }));
+    $('#player').append(bar, side);
+    this.ui = { bar, side, items: side.querySelector('.lv-items') };
+  },
+
+  closeOverlays() {
+    if (!this.ui) return;
+    this.ui.bar.classList.remove('on');
+    this.ui.side.classList.remove('on');
+    this.barState = null;
+    this.listState = null;
+  },
+
+  barState: null,
+
+  openBar(ch = this.cur.ch) {
+    this.mount();
+    this.ui.side.classList.remove('on');
+    this.listState = null;
+    this.barState = { ch, off: 0 };
+    this.ui.bar.classList.add('on');
+    this.renderBar();
+  },
+
+  async renderBar() {
+    const s = this.barState;
+    if (!s) return;
+    this.armBarTimer();
+    const ch = s.ch;
+    const live = ch === this.cur?.ch;
+    const bar = this.ui.bar;
+    const head = h(
+      'div',
+      { class: 'lv-head' },
+      ch.logo ? h('img', { src: ch.logo, alt: '', onerror: (e) => e.target.remove() }) : null,
+      h('div', { class: 'lv-num' }, ch.num),
+      h('div', { class: 'lv-name' }, ch.name),
+      h('div', { class: `lv-tag${live ? ' live' : ''}` }, live ? 'AO VIVO' : 'OUTRO CANAL')
+    );
+    fill(bar, head, h('div', { class: 'lv-prog muted' }, 'Carregando programação…'));
+
+    const list = await this.epg(ch);
+    if (this.barState !== s) return;
+    const base = this.nowIndex(list);
+    if (!list.length || base < 0) {
+      fill(bar, head, h('div', { class: 'lv-prog muted' }, 'Sem programação para este canal.'), this.hints());
+      return;
+    }
+    s.off = Math.max(-base, Math.min(list.length - 1 - base, s.off));
+    const i = base + s.off;
+    const e = list[i];
+    const now = Date.now();
+    const hm = (t) => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const day = (t) => {
+      const d = new Date(t);
+      const today = new Date();
+      const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - today.setHours(0, 0, 0, 0)) / 86400000);
+      return diff === 0 ? '' : diff === 1 ? 'Amanhã, ' : diff === -1 ? 'Ontem, ' : `${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' })}, `;
+    };
+    const label = e.start <= now && e.end > now ? 'Agora' : e.end <= now ? 'Já passou' : s.off === 1 ? 'A seguir' : 'Mais tarde';
+    const pct = Math.min(1, Math.max(0, (now - e.start) / (e.end - e.start)));
+
+    const strip = h(
+      'div',
+      { class: 'lv-strip' },
+      list.slice(Math.max(0, i - 1), i + 4).map((x) =>
+        h('div', { class: `lv-chip${x === e ? ' on' : ''}${x.end <= now ? ' past' : ''}` }, h('b', {}, hm(x.start)), h('span', {}, x.title))
+      )
+    );
+    fill(
+      bar,
+      head,
+      h(
+        'div',
+        { class: 'lv-prog' },
+        h('div', { class: 'lv-when' }, h('span', { class: 'lv-label' }, label), `${day(e.start)}${hm(e.start)} – ${hm(e.end)}`),
+        h('div', { class: 'lv-title' }, e.title || 'Sem título'),
+        label === 'Agora' ? h('div', { class: 'lv-progress' }, h('i', { style: { width: `${pct * 100}%` } })) : null,
+        e.desc ? h('p', { class: 'lv-desc' }, e.desc) : null
+      ),
+      strip,
+      this.hints()
+    );
+  },
+
+  hints() {
+    return h('div', { class: 'lv-hints' }, '◀ ▶  programação', h('span', {}, '▲ ▼  outros canais'), h('span', {}, 'OK  lista de canais'), h('span', {}, 'CH + / –  trocar de canal'));
+  },
+
+  armBarTimer() {
+    clearTimeout(this.barTimer);
+    this.barTimer = setTimeout(() => this.barState && (this.ui.bar.classList.remove('on'), (this.barState = null)), 12000);
+  },
+
+  /* --------------------------------------------- lista da direita */
+
+  listState: null,
+
+  openList(ch = this.cur.ch) {
+    this.mount();
+    this.ui.bar.classList.remove('on');
+    this.barState = null;
+    const list = this.build();
+    this.listState = { i: Math.max(0, list.indexOf(ch)) };
+    this.ui.items.replaceChildren(
+      ...list.map((c) =>
+        h(
+          'div',
+          { class: `lv-row${c === this.cur?.ch ? ' current' : ''}` },
+          h('div', { class: 'lv-num' }, c.num),
+          c.logo ? h('img', { src: c.logo, alt: '', loading: 'lazy', onerror: (e) => (e.target.style.visibility = 'hidden') }) : h('i'),
+          h('div', { class: 'lv-row-text' }, h('div', { class: 'lv-name' }, c.name), h('div', { class: 'lv-now' }))
+        )
+      )
+    );
+    this.ui.side.classList.add('on');
+    this.moveList(0);
+  },
+
+  moveList(d) {
+    const s = this.listState;
+    const rows = this.ui.items.children;
+    s.i = Math.max(0, Math.min(rows.length - 1, s.i + d));
+    [...rows].forEach((r, j) => r.classList.toggle('sel', j === s.i));
+    rows[s.i].scrollIntoView({ block: 'center' });
+    // "Agora:" dos canais perto da selecao, sem pedir a programacao de todos de uma vez.
+    clearTimeout(this.listTimer);
+    this.listTimer = setTimeout(() => {
+      const list = this.build();
+      const span = this.allEpg ? 25 : 5;
+      for (let j = Math.max(0, s.i - span); j <= Math.min(rows.length - 1, s.i + span); j++) {
+        const cell = rows[j].querySelector('.lv-now');
+        if (cell.textContent) continue;
+        this.epg(list[j]).then((epg) => {
+          const e = epg[this.nowIndex(epg)];
+          if (e && e.start <= Date.now()) cell.textContent = e.title;
+        });
+      }
+    }, 250);
+  },
+
+  /* ----------------------------------------------------------- teclas */
+
+  onKey(e, code) {
+    const stop = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const key = { 37: 'left', 38: 'up', 39: 'right', 40: 'down', 13: 'ok' }[code] || { ArrowLeft: 'left', ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', Enter: 'ok' }[e.key];
+    const list = this.build();
+
+    if (Player.ui.error.classList.contains('on')) return false; // a tela de erro tem as teclas dela
+
+    if (code === TV_KEYS.chUp || code === TV_KEYS.chDown) {
+      stop();
+      this.step(code === TV_KEYS.chUp ? 1 : -1);
+      return true;
+    }
+    if (code === TV_KEYS.back) {
+      stop();
+      if (this.listState || this.barState) this.closeOverlays();
+      else Player.close();
+      return true;
+    }
+    // Sem pausar, avancar ou voltar no ao vivo.
+    if ([TV_KEYS.play, TV_KEYS.pause, TV_KEYS.playPause, TV_KEYS.ff, TV_KEYS.rw].includes(code)) {
+      stop();
+      return true;
+    }
+    if (!key) return false;
+    stop();
+
+    if (this.listState) {
+      if (key === 'up' || key === 'down') this.moveList(key === 'up' ? -1 : 1);
+      else if (key === 'ok') this.play(list[this.listState.i]);
+      return true;
+    }
+    if (this.barState) {
+      const s = this.barState;
+      if (key === 'left' || key === 'right') {
+        s.off += key === 'right' ? 1 : -1;
+        this.renderBar();
+      } else if (key === 'up' || key === 'down') {
+        const i = list.indexOf(s.ch);
+        this.barState = { ch: list[(i + (key === 'down' ? 1 : -1) + list.length) % list.length], off: 0 };
+        this.renderBar();
+      } else if (key === 'ok') this.openList(s.ch);
+      return true;
+    }
+    if (key === 'down') this.openBar();
+    else if (key === 'ok') this.openList();
+    else Player.poke();
+    return true;
+  },
+
+  /* ------------------------------------------------------------- tela */
+
+  init() {
+    // Programacao completa em segundo plano, assim que a lista de canais chegar.
+    const wait = setInterval(() => {
+      if (!Data.ready || !Data.cfg.server) return;
+      clearInterval(wait);
+      this.loadAll();
+      setInterval(() => this.loadAll(), 3 * 3600000);
+    }, 1000);
+
+    Player.video.addEventListener('playing', () => this.started());
+    Player.video.addEventListener('timeupdate', () => Player.video.currentTime > 0 && this.started());
+
+    // A linha "Agora / A seguir" do canal usa a programacao ja baixada, sem pedir ao servidor a cada minuto.
+    const loadEpg = Player.loadEpg.bind(Player);
+    Player.loadEpg = () => {
+      if (!this.cur) return loadEpg();
+      const s = Player.session;
+      const ch = this.cur.ch;
+      const hm = (t) => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const show = async () => {
+        const list = await this.epg(ch);
+        if (Player.session !== s) return;
+        const i = this.nowIndex(list);
+        const cur = list[i]?.start <= Date.now() ? list[i] : null;
+        const nxt = list[cur ? i + 1 : i];
+        const parts = [];
+        if (cur) parts.push(`Agora: ${cur.title} (${hm(cur.start)}–${hm(cur.end)})`);
+        if (nxt) parts.push(`A seguir: ${nxt.title} às ${hm(nxt.start)}`);
+        Player.ui.sub.textContent = parts.join('   ·   ');
+      };
+      show();
+      Player.epgTimer = setInterval(show, 60000);
+    };
+
+    const onError = Player.onError.bind(Player);
+    Player.onError = () => (this.cur && Player.session?.kind === 'live' ? this.fail() : onError());
+
+    // Qualquer canal (inicio, busca, "vistos recentemente") abre pela lista unica.
+    App.playLive = (item) => {
+      const ch = item.variants ? item : this.find(item);
+      if (ch) this.play(ch);
+    };
+
+    App.viewLive = (view) => {
+      if (!Data.ready) return App.splash('Carregando sua lista…');
+      const list = this.build();
+      const asItem = (c) => ({ kind: 'live', key: c.key, name: `${c.num}   ${c.name}`, poster: c.logo, variants: c.variants, num: c.num, ch: c });
+      view.append(h('div', { class: 'page-head' }, h('h1', {}, 'Ao Vivo', h('span', { class: 'count' }, `${list.length} canais`))));
+      const recent = [...new Set(Watch.history.map((x) => Data.byKey.get(x.key)).filter((x) => x?.kind === 'live').map((x) => this.find(x)).filter(Boolean))];
+      if (recent.length) view.append(h('div', { class: 'rows' }, row('Vistos recentemente', recent.map(asItem), { noMore: true })));
+      view.append(App.grid(list.map(asItem)));
+    };
+  },
+};
+
+Live.init();

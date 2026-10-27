@@ -29,3 +29,24 @@ npm install
 npm start        # roda sem empacotar
 npm run build    # gera dist/IPTV Cinema-darwin-arm64/IPTV Cinema.app
 ```
+
+## Versão para TV Samsung (Tizen)
+
+As mesmas telas, com controle remoto, player nativo da Samsung (AVPlay) e um
+ao vivo próprio para a TV (lista única de canais, troca por CH+/CH-, barra de
+programação na seta para baixo e lista de canais no OK). Fica em `tizen/`.
+
+Pré-requisitos (uma vez só):
+
+1. Tizen Studio CLI em `~/tizen-studio`, com o Certificate Manager e o
+   `cert-add-on` (certificado Samsung).
+2. Perfil de certificado **IPTVCinema** (tipo Samsung → TV) criado no
+   Certificate Manager. Vale até 27/10/2027; depois é só criar outro e reinstalar.
+3. TV em Modo Desenvolvedor com o IP do Mac (Aplicativos → 12345).
+
+Instalar ou atualizar na TV:
+
+    sh tizen/deploy.sh 192.168.1.12
+
+O pacote leva servidor, usuário, senha e chave do TMDB tirados da configuração
+do app do Mac — por isso `tizen/build/` e o `.wgt` ficam fora do git.

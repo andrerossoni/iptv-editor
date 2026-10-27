@@ -33,7 +33,11 @@ const Data = {
     return res.json();
   },
 
-  /** Abre com a copia salva (instantaneo) e atualiza pela rede em seguida. */
+  /**
+   * Abre com a copia salva (instantaneo) e atualiza pela rede em seguida.
+   * Copia de menos de 20 minutos nao e baixada de novo, e se o servidor
+   * devolver a mesma lista a tela nao e redesenhada.
+   */
   async load(onChange) {
     this.cfg = await native.getConfig();
     const cached = await native.cacheGet('catalog');
@@ -42,8 +46,13 @@ const Data = {
       onChange();
     }
     if (!this.cfg.server) return;
+    if (cached && Date.now() - (cached.at || 0) < 20 * 60000) return;
     try {
       const raw = await this.fetchAll();
+      if (cached && this.signature(raw) === this.signature(cached)) {
+        native.cacheSet('catalog', raw);
+        return;
+      }
       this.apply(raw);
       native.cacheSet('catalog', raw);
       onChange();
@@ -51,6 +60,12 @@ const Data = {
       if (!cached) throw err;
       toast('Sem conexão com o servidor — mostrando a última cópia salva.');
     }
+  },
+
+  /** Resumo barato da lista: muda se entrar, sair ou atualizar qualquer titulo. */
+  signature(raw) {
+    const sum = (list, f) => (Array.isArray(list) ? list.reduce((a, x) => a + (+x[f] || 0), list.length) : 0);
+    return [sum(raw.v, 'added'), sum(raw.s, 'last_modified'), sum(raw.l, 'stream_id'), (raw.vc || []).length, (raw.sc || []).length, (raw.lc || []).length].join('|');
   },
 
   async fetchAll() {
@@ -104,6 +119,7 @@ const Data = {
       poster: x.stream_icon || '',
       cat: String(x.category_id),
       added: (+x.added || 0) * 1000,
+      epg: x.epg_channel_id || '',
     }));
 
     this.items = { movie: movies, series, live };
@@ -152,14 +168,35 @@ const Data = {
 
   /* ------------------------------------------------------------ detalhes */
 
+  /**
+   * Detalhes ficam guardados no disco entre aberturas: filme por 3 dias, serie
+   * por 6 horas (pode ganhar episodio). O destaque do inicio abre sem esperar.
+   */
   async details(item) {
     if (this.infoCache.has(item.key)) return this.infoCache.get(item.key);
-    const promise = (item.kind === 'movie' ? this.movieInfo(item) : this.seriesInfo(item)).catch((err) => {
+    const ttl = item.kind === 'movie' ? 3 * 86400000 : 6 * 3600000;
+    const name = `info-${item.key.replace(':', '-')}`;
+    const promise = (async () => {
+      const saved = await native.cacheGet(name).catch(() => null);
+      if (saved && Date.now() - saved.at < ttl && !!saved.info.tmdbData === !!this.cfg.tmdbKey) return this.relink(item, saved.info);
+      const info = await (item.kind === 'movie' ? this.movieInfo(item) : this.seriesInfo(item));
+      // tmdbData e grande e so serve para montar o resto; os "semelhantes" viram chaves.
+      const { tmdbData, similar, ...rest } = info;
+      native.cacheSet(name, { at: Date.now(), info: { ...rest, tmdbData: !!tmdbData, similar: (similar || []).map((x) => x.key) } });
+      return info;
+    })().catch((err) => {
       this.infoCache.delete(item.key);
       throw err;
     });
     this.infoCache.set(item.key, promise);
     return promise;
+  },
+
+  /** Detalhes vindos do disco: os "semelhantes" voltam a ser itens da lista atual. */
+  relink(item, info) {
+    const similar = (info.similar || []).map((k) => this.byKey.get(k)).filter(Boolean);
+    if (info.prov) item.prov ||= info.prov;
+    return { ...info, similar };
   },
 
   async movieInfo(item) {
@@ -253,7 +290,7 @@ const Data = {
     out.similar = this.matchTmdb(item.kind, [...(t.recommendations?.results || []), ...(t.similar?.results || [])]);
     const br = t['watch/providers']?.results?.BR?.flatrate || [];
     const prov = Providers.best(br.map((p) => p.provider_id));
-    if (prov) item.prov = prov;
+    if (prov) item.prov = out.prov = prov;
     return out;
   },
 

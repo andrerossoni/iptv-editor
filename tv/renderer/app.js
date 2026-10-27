@@ -39,6 +39,7 @@ function card(item, opts = {}) {
     'button',
     {
       class: `card ${live ? 'card-live' : 'card-poster'}`,
+      'data-key': item.key,
       onclick: () => (opts.onClick ? opts.onClick() : App.openItem(item, opts.siblings)),
     },
     h(
@@ -430,6 +431,8 @@ const App = {
       bg.append(img);
 
       const inList = Watch.inList(item.key);
+      // Na TV o foco pode estar num botao do destaque; ele continua no mesmo lugar ao trocar.
+      const focused = [...body.querySelectorAll('button')].findIndex((b) => b === document.activeElement || b.classList.contains('tv-focus'));
       fill(body,
         h('div', { class: 'hero-kind' }, item.kind === 'movie' ? 'FILME' : 'SÉRIE', h('span', {}, kindLabel(item))),
         info.logo ? h('img', { class: 'hero-logo', src: info.logo, alt: item.name }) : h('h1', { class: 'hero-title' }, item.name),
@@ -446,6 +449,8 @@ const App = {
           })
         )
       );
+      const again = focused >= 0 && body.querySelectorAll('button')[focused];
+      if (again) typeof Focus !== 'undefined' ? Focus.focus(again, false) : again.focus({ preventScroll: true });
     };
     show(0);
     this.timers.push(setInterval(() => document.hasFocus() && show(index + 1), 12000));

@@ -7,3 +7,5 @@ MEUS-DADOS.txt
 wrangler.toml
 tv/node_modules/
 tv/dist/
+tv/tizen/build/
+*.wgt

@@ -103,8 +103,17 @@ const Trends = {
   /** Busca as listas (cache de 12h no disco) e redesenha quando chegarem. */
   async load(onChange) {
     if (!Data.cfg.tmdbKey) return;
+    // As ~120 listas juntas ficam guardadas por 12h: abrir o app nao repete as consultas.
+    const saved = await native.cacheGet('trends').catch(() => null);
+    if (saved?.lists && Date.now() - saved.at < TREND_TTL) {
+      this.raw = saved;
+      this.apply();
+      onChange?.();
+      return;
+    }
     try {
       this.raw = await this.fetchAll();
+      native.cacheSet('trends', { ...this.raw, at: Date.now() });
     } catch (err) {
       console.warn('Streamings: falhou', err);
       return;
