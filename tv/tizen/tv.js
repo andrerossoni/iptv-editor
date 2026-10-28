@@ -57,7 +57,9 @@ const Focus = {
   },
 
   all() {
-    return [...document.querySelectorAll(this.SEL)].filter((el) => this.visible(el));
+    // Com a pergunta de sair aberta, so os botoes dela existem.
+    const sel = this.exitBox ? '.tv-exit button' : this.SEL;
+    return [...document.querySelectorAll(sel)].filter((el) => this.visible(el));
   },
 
   /** Primeiro foco de uma tela: o card de onde veio, o botao principal ou o primeiro item. */
@@ -160,13 +162,15 @@ const Focus = {
     if (code === TV_KEYS.back) {
       e.preventDefault();
       e.stopPropagation();
+      if (this.exitBox) return this.closeExit();
       if (document.activeElement?.tagName === 'INPUT') return document.activeElement.blur();
       if (App.stack.length > 1) return App.back();
-      if (App.current?.name !== 'home') return App.go('home', {}, true);
-      // Na tela inicial: dois "voltar" seguidos fecham o app.
-      if (Date.now() - this.backPressedAt < 2500) return native.quit();
-      this.backPressedAt = Date.now();
-      return toast('Aperte Voltar de novo para sair.', 2500);
+      // Sem tela para voltar: primeiro sobe para o menu de cima; de la, pergunta se quer sair.
+      if (!document.activeElement?.closest('#topbar')) {
+        const tab = document.querySelector('#nav button.on') || document.querySelector('#nav button');
+        return this.focus(tab);
+      }
+      return this.askExit();
     }
 
     // OK do controle: clica no que estiver em foco (campo de texto abre o teclado da TV).
@@ -187,6 +191,26 @@ const Focus = {
     e.preventDefault();
     e.stopPropagation();
     this.move(dir);
+  },
+
+  /* ------------------------------------------------------ sair do app */
+
+  exitBox: null,
+
+  askExit() {
+    this.exitFrom = document.activeElement;
+    const no = h('button', { class: 'btn', onclick: () => this.closeExit() }, 'Não');
+    const yes = h('button', { class: 'btn primary', onclick: () => native.quit() }, 'Sim');
+    this.exitBox = h('div', { class: 'tv-exit' }, h('div', { class: 'tv-exit-box' }, h('h2', {}, 'Sair do IPTV Cinema?'), h('div', { class: 'actions' }, yes, no)));
+    document.body.append(this.exitBox);
+    // "Nao" ja vem selecionado: um OK sem querer nao fecha o app.
+    this.focus(no, false);
+  },
+
+  closeExit() {
+    this.exitBox?.remove();
+    this.exitBox = null;
+    if (this.exitFrom?.isConnected) this.focus(this.exitFrom, false);
   },
 
   /** No player: OK pausa, lados avancam, cima/baixo trocam de canal; Voltar sai. */

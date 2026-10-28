@@ -45,7 +45,10 @@ function epgKey(name) {
 /** Jeitos de o mesmo canal aparecer nos guias ("TC Pipoca" = "Telecine Pipoca", "SBT SP" = "SBT" de Sao Paulo). */
 function epgAliases(name) {
   const k = epgKey(name);
-  return [...new Set([k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim()])].filter(Boolean);
+  const list = [k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim()];
+  // "BANDSPORTS" e "Band Sports" sao o mesmo canal: tenta tambem sem espacos.
+  // "REDETV!" grudado: o "TV" nao sai sozinho como em "Rede TV".
+  return [...new Set([...list, ...list.map((x) => x.replace(/ /g, '')), k.replace(/tv\b/, '').trim()])].filter(Boolean);
 }
 
 const xmlText = (s) =>
@@ -71,7 +74,7 @@ function parseXmltv(xml) {
       const raw = xmlText(d[1]);
       const city = raw.match(/^.*?\/([A-Z]{2})\s+(.*)$/);
       const keys = city ? [`${epgKey(city[2])} ${city[1].toLowerCase()}`, epgKey(city[2])] : [epgKey(raw)];
-      for (const k of keys) if (k && !names.has(k)) names.set(k, m[1]);
+      for (const k of keys.flatMap((x) => [x, x.replace(/ /g, '')])) if (k && !names.has(k)) names.set(k, m[1]);
     }
   }
   const since = Date.now() - 12 * 3600000;
@@ -624,6 +627,15 @@ const Live = {
     App.playLive = (item) => {
       const ch = item.variants ? item : this.find(item);
       if (ch) this.play(ch);
+    };
+
+    // "TV ao vivo" no menu de cima ja entra no canal 1, sem tela de escolha.
+    const nav = document.querySelector('#nav [data-view="live"]');
+    nav.textContent = 'TV ao vivo';
+    nav.onclick = () => {
+      const first = Data.ready && this.build()[0];
+      if (first) this.play(first);
+      else toast('Carregando a lista de canais…');
     };
 
     App.viewLive = (view) => {
