@@ -605,12 +605,24 @@ const Live = {
 
   init() {
     // Programacao completa em segundo plano, assim que a lista de canais chegar.
+    // Normalmente a cada 12h; se a lista mudar (canal novo, nome trocado), na hora.
+    const refresh = () => {
+      if (!Data.ready || !Data.cfg.server) return;
+      this.loading ||= this.loadAll().finally(() => (this.loading = null));
+    };
     const wait = setInterval(() => {
       if (!Data.ready || !Data.cfg.server) return;
       clearInterval(wait);
-      this.loadAll();
-      setInterval(() => this.loadAll(), 3 * 3600000);
+      refresh();
+      setInterval(refresh, 3600000);
     }, 1000);
+    // A lista do servidor chegou diferente da guardada: confere se a grade precisa ser refeita.
+    const apply = Data.apply.bind(Data);
+    Data.apply = (raw) => {
+      apply(raw);
+      if (this.loading) this.loading.then(refresh);
+      else refresh();
+    };
 
     Player.video.addEventListener('playing', () => this.started());
     Player.video.addEventListener('timeupdate', () => Player.video.currentTime > 0 && this.started());
