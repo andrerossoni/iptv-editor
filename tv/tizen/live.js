@@ -25,7 +25,20 @@ function xmltvTime(s) {
 const EPG_SOURCES = [
   { name: 'BrazilTVEPG', url: 'https://raw.githubusercontent.com/limaalef/BrazilTVEPG/main/epg.xml' },
   { name: 'Claro', url: 'https://raw.githubusercontent.com/limaalef/BrazilTVEPG/main/claro.xml' },
+  // Extras compactados (poucos KB): completam canais que as duas primeiras nao tem (Record, Sony Movies, Box Kids...).
+  { name: 'open-epg', url: 'https://www.open-epg.com/files/brazil4.xml.gz', extra: true },
+  { name: 'epgshare', url: 'https://epgshare01.online/epgshare01/epg_ripper_BR2.xml.gz', extra: true },
+  { name: 'open-epg 1', url: 'https://www.open-epg.com/files/brazil1.xml.gz', extra: true },
 ];
+
+/** Baixa um XMLTV; os .gz sao descompactados na propria TV. */
+async function fetchXml(url) {
+  const res = await fetch(url);
+  if (!res.ok) return '';
+  if (!url.endsWith('.gz')) return res.text();
+  if (typeof DecompressionStream === 'undefined') return '';
+  return new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
+}
 
 /** Nome de canal para cruzar entre fontes: sem qualidade, acento, "TV", "Brasil" etc. */
 function epgKey(name) {
@@ -45,7 +58,8 @@ function epgKey(name) {
 /** Jeitos de o mesmo canal aparecer nos guias ("TC Pipoca" = "Telecine Pipoca", "SBT SP" = "SBT" de Sao Paulo). */
 function epgAliases(name) {
   const k = epgKey(name);
-  const list = [k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim()];
+  const uf = k.replace(/ (ac|al|am|ap|ba|ce|df|es|go|ma|mg|ms|mt|pa|pb|pe|pi|pr|rj|rn|ro|rr|rs|sc|se|sp|to)$/, '');
+  const list = [k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim(), uf];
   // "BANDSPORTS" e "Band Sports" sao o mesmo canal: tenta tambem sem espacos.
   // "REDETV!" grudado: o "TV" nao sai sozinho como em "Rede TV".
   return [...new Set([...list, ...list.map((x) => x.replace(/ /g, '')), k.replace(/tv\b/, '').trim()])].filter(Boolean);
@@ -265,23 +279,26 @@ const Live = {
   allEpg: null,
 
   async loadAll() {
+    const list = this.build();
+    // Mudou a lista de canais (nomes, canais novos) ou as fontes: refaz na hora, sem esperar as 12h.
+    const sig = `${EPG_SOURCES.map((s) => s.url).join(',')}|${list.map((c) => c.key).join(',')}`;
     const cached = await native.cacheGet('epg-guide').catch(() => null);
     if (cached?.by) this.useAll(cached);
-    if (cached && Date.now() - cached.at < 12 * 3600000) return;
+    if (cached && cached.sig === sig && Date.now() - cached.at < 12 * 3600000) return;
     const q = new URLSearchParams({ username: Data.cfg.user, password: Data.cfg.pass });
     const sources = [...EPG_SOURCES, { name: 'provedor', url: `${Data.cfg.server}/xmltv.php?${q}`, byId: true }];
-    const list = this.build();
     // Primeiro junta o que cada fonte tem de cada canal; depois escolhe.
     const found = {};
     for (const src of sources) {
+      // Fonte extra so e baixada se ainda faltar grade para algum canal.
+      if (src.extra && list.every((ch) => found[ch.key]?.some((c) => hasNow(c.rows)))) continue;
       let xml;
       try {
-        const res = await fetch(src.url);
-        if (!res.ok) continue;
-        xml = await res.text();
+        xml = await fetchXml(src.url);
       } catch {
         continue;
       }
+      if (!xml) continue;
       const guide = parseXmltv(xml);
       xml = null;
       for (const ch of list) {
@@ -305,7 +322,7 @@ const Live = {
         }
       }
     }
-    const data = { at: Date.now(), by, from };
+    const data = { at: Date.now(), sig, by, from };
     native.cacheSet('epg-guide', data);
     this.useAll(data);
   },
