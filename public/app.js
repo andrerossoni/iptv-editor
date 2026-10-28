@@ -953,6 +953,61 @@ function newCat() {
   );
 }
 
+/**
+ * Tira tudo das pastas da aba atual e junta numa pasta so, na ordem em que
+ * aparece hoje — dai em diante e so ocultar/mostrar. O estado anterior da aba
+ * fica guardado neste navegador para desfazer.
+ */
+async function flattenAll() {
+  const k = kind;
+  const total = catalog[k].length;
+  if (!total) return toast('Sincronize antes: o catálogo está vazio.');
+  const ocultos = catalog[k].filter((it) => isHidden(k, it)).length;
+  const backup = await idbGet(`backup:${k}`).catch(() => null);
+  const nome = { live: 'Canais', vod: 'Filmes', series: 'Séries' }[k];
+  modal(
+    `<h2>Juntar tudo numa pasta só</h2>
+     <p>Os ${total.toLocaleString('pt-BR')} itens de ${LABEL[k]} saem das ${catsOf(k).length} pastas e
+        ficam numa lista única, na mesma ordem de hoje.</p>
+     <label class="chk"><input type="checkbox" id="fl-show" checked> Mostrar também os ${ocultos.toLocaleString('pt-BR')} que estão ocultos</label>
+     <label>Nome da pasta</label><input type="text" id="fl-name" value="${nome}">
+     <p class="muted">Nada vai para o app até você tocar em Publicar.${backup ? '' : ' Dá para desfazer depois por este mesmo botão, neste aparelho.'}</p>
+     <div class="modal-actions">
+       ${backup ? '<button id="fl-undo" class="ghost">↺ Desfazer a última junção</button>' : ''}
+       <button data-close class="ghost">Cancelar</button><button id="fl-ok" class="primary">Juntar</button>
+     </div>`,
+    (box, close) => {
+      box.querySelector('#fl-undo')?.addEventListener('click', async () => {
+        const b = JSON.parse(backup);
+        state.cats[k] = b.cats;
+        state.items[k] = b.items;
+        invalidateOrder(k);
+        curCat = 'all'; clearCatSel(); clearSel();
+        await saveState();
+        close(); renderCats(); renderList();
+        toast('Pastas de antes restauradas. Toque em Publicar para valer no app.', 5000);
+      });
+      box.querySelector('#fl-ok').addEventListener('click', async () => {
+        const showAll = box.querySelector('#fl-show').checked;
+        const name = box.querySelector('#fl-name').value.trim() || nome;
+        await idbSet(`backup:${k}`, JSON.stringify({ at: Date.now(), cats: state.cats[k], items: state.items[k] }));
+        // ordem e "esta oculto?" tem que ser lidos antes de as pastas sumirem
+        const order = sortedIndices(k).slice();
+        const hidden = new Set(showAll ? [] : order.filter((i) => isHidden(k, catalog[k][i])));
+        const used = catsOf(k).map((c) => Number(c.id)).filter((n) => n >= NEW_CAT_BASE && n < Number(UNCAT));
+        const id = String(Math.max(NEW_CAT_BASE, ...used) + 1);
+        order.forEach((i, pos) => patch(k, idOf(k, catalog[k][i]), { c: id, o: pos, h: hidden.has(i) ? true : null }));
+        state.cats[k] = [{ id, name, hidden: false }];
+        invalidateOrder(k);
+        curCat = 'all'; clearCatSel(); clearSel();
+        await saveState();
+        close(); renderCats(); renderList();
+        toast(`Pronto: ${total.toLocaleString('pt-BR')} itens numa lista só. Toque em Publicar para valer no app.`, 6000);
+      });
+    }
+  );
+}
+
 /** Enter confirma o campo. Alguns teclados/automacoes mandam 'Return'. */
 function onEnter(input, fn) {
   input.addEventListener('keydown', (e) => {
@@ -1387,6 +1442,7 @@ $('#btn-selmode').addEventListener('click', () => {
 });
 
 $('#btn-new-cat').addEventListener('click', newCat);
+$('#btn-flatten').addEventListener('click', () => flattenAll().catch((e) => toast('Falhou: ' + e.message, 5000)));
 $('#btn-folders').addEventListener('click', () => document.body.classList.add('drawer-open'));
 $('#drawer-shade').addEventListener('click', closeDrawer);
 
