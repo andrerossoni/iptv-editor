@@ -113,8 +113,9 @@ const Focus = {
     el.focus({ preventScroll: true });
     const behavior = smooth ? 'smooth' : 'auto';
 
-    // Fileira horizontal: anda para o card ficar inteiro na tela.
+    // Fileira horizontal: completa os cards que faltam e anda para o card ficar inteiro na tela.
     const track = el.closest('.track');
+    track?._rest?.();
     if (track) {
       const left = el.offsetLeft - track.offsetLeft;
       if (left < track.scrollLeft + 10 || left + el.offsetWidth > track.scrollLeft + track.clientWidth - 10) {

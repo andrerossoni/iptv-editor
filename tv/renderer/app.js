@@ -4,6 +4,7 @@
  */
 
 const ROW_LIMIT = 40;
+const ROW_FIRST = 12;
 
 /* As fileiras so desenham os cards quando chegam perto da tela. */
 const rowObserver = new IntersectionObserver(
@@ -86,14 +87,25 @@ function row(title, items, opts = {}) {
     h('div', { class: 'row-wrap' }, left, track, right)
   );
 
+  // Primeiro so os cards que cabem na tela; o resto quando voce entra ou rola a fileira.
   sec._fill = () => {
     const shown = entries.slice(0, ROW_LIMIT);
     const siblings = opts.siblings || entries.map((e) => e.item);
-    append(
-      track,
-      shown.map((e) => card(e.item, { siblings, ...e, item: undefined })),
-      more ? h('button', { class: 'card card-more', onclick: more }, h('div', { class: 'card-img' }, h('span', {}, 'Ver todos', h('b', {}, entries.length)))) : null
-    );
+    const cards = (list) => list.map((e) => card(e.item, { siblings, ...e, item: undefined }));
+    const tail = more ? h('button', { class: 'card card-more', onclick: more }, h('div', { class: 'card-img' }, h('span', {}, 'Ver todos', h('b', {}, entries.length)))) : null;
+    append(track, cards(shown.slice(0, ROW_FIRST)), shown.length <= ROW_FIRST ? tail : null);
+    if (shown.length > ROW_FIRST) {
+      const rest = () => {
+        track._rest = null;
+        track.removeEventListener('focusin', rest);
+        track.removeEventListener('scroll', rest);
+        append(track, cards(shown.slice(ROW_FIRST)), tail);
+        syncArrows();
+      };
+      track._rest = rest;
+      track.addEventListener('focusin', rest);
+      track.addEventListener('scroll', rest, { passive: true });
+    }
     requestAnimationFrame(syncArrows);
   };
   rowObserver.observe(sec);
@@ -164,8 +176,9 @@ const App = {
           first = false;
           this.go('home', {}, true);
           this.loadTrends();
-        } else if (this.current?.name === 'home' && scrollY < 80) {
-          this.render();
+        } else {
+          if (this.current?.name === 'home' && scrollY < 80) this.render();
+          this.warm();
         }
       });
     } catch (err) {
@@ -177,10 +190,25 @@ const App = {
 
   /** Em alta nos streamings: entra assim que chegar, sem atrapalhar quem ja esta rolando a tela. */
   loadTrends() {
+    this.warm();
     Trends.load(() => {
       const name = this.current?.name;
       if ((name === 'home' || name === 'movies' || name === 'series') && scrollY < 80) this.render();
+      this.warm();
     });
+  },
+
+  /** Adianta, com o app parado, as contas das abas Filmes e Series: a primeira visita ja abre rapido. */
+  warm() {
+    const jobs = [() => Group.byGenre('movie'), () => Group.byGenre('series'), () => Recs.recentlyAdded('movie'), () => Recs.recentlyAdded('series')];
+    const next = () => {
+      const job = jobs.shift();
+      if (!job) return;
+      job();
+      setTimeout(next, 300);
+    };
+    clearTimeout(this.warmTimer);
+    this.warmTimer = setTimeout(next, 2500);
   },
 
   applyScale(s) {
