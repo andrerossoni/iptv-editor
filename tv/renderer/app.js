@@ -104,7 +104,7 @@ function chips(options, current, onPick) {
   return h(
     'div',
     { class: 'chips' },
-    options.map(([value, label]) => h('button', { class: `chip${value === current ? ' on' : ''}`, onclick: () => onPick(value) }, label))
+    options.map(([value, label]) => h('button', { class: `chip${value === current ? ' on' : ''}`, 'data-key': `chip:${value}`, onclick: () => onPick(value) }, label))
   );
 }
 
@@ -133,7 +133,7 @@ const App = {
     Player.init();
     this.applyScale(store.get('scale', 1));
 
-    document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => this.go(b.dataset.view, {}, true)));
+    document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => this.tab(b.dataset.view)));
     $('#back').onclick = () => this.back();
     window.addEventListener('scroll', () => $('#topbar').classList.toggle('solid', scrollY > 30), { passive: true });
 
@@ -194,6 +194,23 @@ const App = {
 
   get current() {
     return this.stack[this.stack.length - 1];
+  },
+
+  /**
+   * Aba do topo: o destaque muda na hora e a tela e desenhada no quadro
+   * seguinte; varios cliques seguidos desenham so a ultima aba. A aba que ja
+   * esta aberta (sem nada por cima) nao e redesenhada.
+   */
+  tab(name) {
+    if (this.stack.length === 1 && this.current?.name === name && !this.pendingTab) return;
+    document.querySelectorAll('#nav [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+    const first = !this.pendingTab;
+    this.pendingTab = name;
+    if (first) setTimeout(() => {
+      const next = this.pendingTab;
+      this.pendingTab = null;
+      this.go(next, {}, true);
+    }, 30);
   },
 
   go(name, params = {}, root = false) {
@@ -672,6 +689,7 @@ const App = {
       info.director ? h('p', { class: 'credits' }, h('b', {}, 'Direção: '), info.director) : null
     );
 
+    document.dispatchEvent(new CustomEvent('view-filled'));
     if (!isMovie && info.seasons?.length) extra.append(this.seasonsBlock(item, info, hist));
 
     let similar = (info.similar || []).filter((x) => x.key !== item.key);

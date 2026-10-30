@@ -409,12 +409,34 @@ const Watch = {
 /* ----------------------------------------------------- recomendacoes */
 
 /** Itens que podem aparecer nas fileiras (conteudo adulto so aparece na busca). */
-const pool = (kind) => (kind ? Data.items[kind] : [...Data.items.movie, ...Data.items.series]).filter((x) => !x.adult);
+/**
+ * Contas sobre o catalogo inteiro (generos, anos, recomendacoes) ficam
+ * guardadas ate o catalogo ou o "em alta" mudar: trocar de aba nao refaz tudo.
+ */
+const Memo = {
+  data: new Map(),
+  clear() {
+    this.data.clear();
+  },
+  get(key, fn) {
+    if (!this.data.has(key)) this.data.set(key, fn());
+    return this.data.get(key);
+  },
+};
+
+/** O que voce assistiu muda algumas fileiras: entra na chave delas. */
+const watchSig = () => `${Watch.history.length}|${Watch.history.slice(0, 5).map((x) => `${x.key}@${x.t}`).join(',')}`;
+
+const pool = (kind) => Memo.get(`pool:${kind}`, () => (kind ? Data.items[kind] : [...Data.items.movie, ...Data.items.series]).filter((x) => !x.adult)).slice();
 
 /** Nota geral de um titulo: em alta nos streamings pesa mais, depois avaliacao e novidade. */
 const rank = (x) => (x.trend?.score || 0) * 4 + (x.rating || 0) / 2 + (Date.now() - x.added < 60 * 86400000 ? 1 : 0);
 
-const byRank = (a, b) => rank(b) - rank(a);
+/** Ordena pela nota calculando cada uma uma vez so (o sort compara cada item muitas vezes). */
+const sortByRank = (list) => {
+  const r = new Map(list.map((x) => [x, rank(x)]));
+  return list.sort((a, b) => r.get(b) - r.get(a));
+};
 
 const Recs = {
   watchedKeys() {
@@ -427,26 +449,26 @@ const Recs = {
 
   /** Novidades: adicionados nos ultimos 45 dias, os melhores primeiro. */
   freshHits(kind) {
-    const since = Date.now() - 45 * 86400000;
-    return pool(kind)
-      .filter((x) => x.added >= since && x.rating >= 6)
-      .sort(byRank)
-      .slice(0, 40);
+    return Memo.get(`fresh:${kind}`, () => {
+      const since = Date.now() - 45 * 86400000;
+      return sortByRank(pool(kind).filter((x) => x.added >= since && x.rating >= 6)).slice(0, 40);
+    });
   },
 
   recentlyAdded(kind) {
-    return pool(kind).sort((a, b) => b.added - a.added).slice(0, 40);
+    return Memo.get(`added:${kind}`, () => pool(kind).sort((a, b) => b.added - a.added).slice(0, 40));
   },
 
   topOfYear(kind, year) {
-    return pool(kind)
-      .filter((x) => x.year === String(year) && x.rating > 0)
-      .sort(byRank)
-      .slice(0, 40);
+    return Memo.get(`year:${kind}:${year}`, () => sortByRank(pool(kind).filter((x) => x.year === String(year) && x.rating > 0)).slice(0, 40));
   },
 
   /** Pontua generos e servicos pelo que voce assistiu e sugere o melhor ainda nao visto. */
   forYou() {
+    return Memo.get(`foryou:${watchSig()}`, () => this.computeForYou());
+  },
+
+  computeForYou() {
     const recent = this.recent().slice(0, 40);
     if (!recent.length) return [];
     const watched = this.watchedKeys();
@@ -492,6 +514,10 @@ const Recs = {
   },
 
   sameVibe(item, watched) {
+    return Memo.get(`vibe:${item.key}:${watchSig()}`, () => this.computeVibe(item, watched));
+  },
+
+  computeVibe(item, watched) {
     const genres = new Set(item.genres);
     return pool(item.kind)
       .filter((x) => x.key !== item.key && !watched.has(x.key))
@@ -508,6 +534,10 @@ const Recs = {
 const Group = {
   /** Uma fileira por genero, na ordem de GENRE_ORDER; cada uma com o que esta em alta primeiro. */
   byGenre(kind) {
+    return Memo.get(`genre:${kind}`, () => this.computeGenre(kind));
+  },
+
+  computeGenre(kind) {
     const buckets = new Map();
     for (const it of pool(kind)) {
       for (const g of it.genres) {
@@ -519,10 +549,14 @@ const Group = {
     return [...buckets.entries()]
       .filter(([, items]) => items.length >= 8)
       .sort((a, b) => order(a[0]) - order(b[0]) || b[1].length - a[1].length)
-      .map(([title, items]) => ({ title, items: items.sort(byRank) }));
+      .map(([title, items]) => ({ title, items: sortByRank(items) }));
   },
 
   byAdded(kind) {
+    return Memo.get(`byadded:${kind}`, () => this.computeAdded(kind));
+  },
+
+  computeAdded(kind) {
     const now = Date.now();
     const day = 86400000;
     const buckets = new Map();
@@ -546,6 +580,10 @@ const Group = {
   },
 
   byYear(kind) {
+    return Memo.get(`byyear:${kind}`, () => this.computeYear(kind));
+  },
+
+  computeYear(kind) {
     const buckets = new Map();
     for (const it of pool(kind)) {
       const y = +it.year;
@@ -556,6 +594,6 @@ const Group = {
     const order = (t) => (/^\d{4}$/.test(t) ? +t : t.startsWith('Anos') ? +t.slice(5) : t.startsWith('Cl') ? 1 : 0);
     return [...buckets.entries()]
       .sort((a, b) => order(b[0]) - order(a[0]))
-      .map(([title, items]) => ({ title, items: items.sort(byRank) }));
+      .map(([title, items]) => ({ title, items: sortByRank(items) }));
   },
 };

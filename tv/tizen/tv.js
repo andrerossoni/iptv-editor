@@ -34,11 +34,22 @@ const Focus = {
     };
     const render = App.render.bind(App);
     App.render = (...args) => {
-      const key = this.nextKey !== undefined ? this.nextKey : this.keyOf(document.activeElement);
+      const navigating = this.nextKey !== undefined;
+      const active = document.activeElement;
+      const key = navigating ? this.nextKey : this.keyOf(active);
       this.nextKey = undefined;
       render(...args);
+      // Redesenho por dados que chegaram (em alta, catalogo) com voce no menu de cima: o foco fica la.
+      if (!navigating && active?.closest?.('#topbar') && active.isConnected) return this.focus(active, false);
       this.settle(key);
     };
+    // Detalhe de filme/serie chega depois da tela: se o foco ficou perdido, vai para o botao principal.
+    document.addEventListener('view-filled', () => {
+      const active = document.activeElement;
+      if (Player.open_ || this.exitBox || (active && active !== document.body && active.isConnected && active.closest('#view'))) return;
+      const el = this.first(null);
+      if (el?.closest('#view')) this.focus(el, false);
+    });
     // De longe, o tamanho "Grande" e o ponto de partida.
     if (store.get('scale', null) == null) store.set('scale', 1.18);
     App.applyScale(store.get('scale', 1.18));
@@ -77,8 +88,10 @@ const Focus = {
   /** As telas montam conteudo aos poucos; tenta por ate 2 segundos. */
   settle(key) {
     let tries = 0;
+    // Uma tela nova cancela a busca de foco da anterior (senao ela rouba o foco depois).
+    const id = (this.settleId = (this.settleId || 0) + 1);
     const attempt = () => {
-      if (Player.open_) return;
+      if (Player.open_ || id !== this.settleId) return;
       const active = document.activeElement;
       if (active && active !== document.body && active.isConnected && this.visible(active) && !key && tries) return;
       const el = this.first(key);
@@ -146,6 +159,11 @@ const Focus = {
         best = el;
       }
     }
+    // Subindo do conteudo para o menu: cai na aba aberta, nao no botao que estiver mais perto na tela.
+    if (best?.closest('#nav') && !cur.closest('#topbar')) {
+      const tab = document.querySelector('#nav button.on');
+      if (tab && this.visible(tab)) best = tab;
+    }
     if (best) this.focus(best);
     else if (dir === 'up') scrollTo({ top: 0, behavior: 'smooth' });
   },
@@ -190,6 +208,11 @@ const Focus = {
     if (document.activeElement?.tagName === 'INPUT' && (dir === 'left' || dir === 'right')) return;
     e.preventDefault();
     e.stopPropagation();
+    // Qualquer seta cancela a busca de foco pendente: quem manda e voce.
+    this.settleId = (this.settleId || 0) + 1;
+    const now = performance.now();
+    if (e.repeat && now - (this.lastMove || 0) < 70) return;
+    this.lastMove = now;
     this.move(dir);
   },
 

@@ -175,6 +175,7 @@ const Trends = {
 
   /** Cruza as listas com o catalogo atual (roda de novo sempre que o catalogo muda). */
   apply() {
+    Memo.clear();
     for (const it of this.touched) delete it.trend;
     this.touched = [];
     if (!this.raw) return;
@@ -207,9 +208,11 @@ const Trends = {
 
   /** Mais fortes primeiro; `field` e score (em alta), fresh (estreias) ou air (episodio novo). */
   top(kind, field = 'score', n = 40) {
-    return this.touched
-      .filter((x) => (!kind || x.kind === kind) && x.trend[field] > 0)
-      .sort((a, b) => b.trend[field] - a.trend[field])
-      .slice(0, n);
+    return Memo.get(`top:${kind}:${field}:${n}`, () =>
+      this.touched
+        .filter((x) => (!kind || x.kind === kind) && x.trend[field] > 0)
+        .sort((a, b) => b.trend[field] - a.trend[field])
+        .slice(0, n)
+    );
   },
 };
