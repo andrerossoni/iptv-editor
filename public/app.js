@@ -174,7 +174,7 @@ const ordOf = (k, it, idx) => {
 
 /* A ordenacao completa e cara com 27 mil itens, entao fica em cache ate mudar. */
 let orderCache = {};
-const invalidateOrder = (k) => { if (k) delete orderCache[k]; else orderCache = {}; };
+const invalidateOrder = (k) => { if (k) delete orderCache[k]; else orderCache = {}; if (!k || k === 'live') grupoCache = null; };
 
 /** Itens na ordem em que o player vai mostrar: pasta por pasta, na ordem da barra lateral. */
 function sortedIndices(k) {
@@ -213,11 +213,101 @@ function ensureUncat(k) {
 
 function counts(k) {
   const map = new Map();
+  // Canal com varias versoes conta uma vez so.
+  if (k === 'live') {
+    for (const g of grupos().porChave.values()) {
+      const c = effCat(k, catalog.live[g[0]]);
+      map.set(c, (map.get(c) || 0) + 1);
+    }
+    return map;
+  }
   for (const it of catalog[k]) {
     const c = effCat(k, it);
     map.set(c, (map.get(c) || 0) + 1);
   }
   return map;
+}
+
+/* ------------------------------------------ canais com varias versoes */
+
+/*
+ * "GNT HD", "GNT FHD" e "GNT SD" sao o mesmo canal: no editor viram uma linha
+ * so, e tudo o que se faz nela vale para todas as versoes (tudo ou nada). Qual
+ * versao toca, quem escolhe e o app da TV, pela qualidade e pela rapidez.
+ */
+const QUALIDADE = /\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b/gi;
+
+/** Mesmo criterio do app da TV para juntar as versoes. */
+function chaveCanal(nome) {
+  const s = String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/\+/g, ' plus ').replace(QUALIDADE, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\b0+(\d)/g, '$1').trim();
+  return s || String(nome);
+}
+
+/** "BAND SPORTS - HD ²" -> { base: "BAND SPORTS", q: "HD ²" }. */
+function separarQualidade(nome) {
+  const m = String(nome).match(/^(.*?)[\s-]*\b((?:fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b.*)$/i);
+  return m && m[1].trim() ? { base: m[1].trim(), q: m[2].trim() } : { base: String(nome).trim(), q: '' };
+}
+
+let grupoCache = null;
+
+/** Canais ao vivo agrupados, na ordem da lista; o primeiro de cada grupo e o que aparece. */
+function grupos() {
+  if (grupoCache) return grupoCache;
+  const porChave = new Map();
+  const doItem = new Map();
+  for (const i of sortedIndices('live')) {
+    const it = catalog.live[i];
+    const k = chaveCanal(effName('live', it));
+    if (!porChave.has(k)) porChave.set(k, []);
+    porChave.get(k).push(i);
+    doItem.set(idOf('live', it), porChave.get(k));
+  }
+  return (grupoCache = { porChave, doItem });
+}
+
+/** Todas as versoes do canal (fora de Ao Vivo, so o proprio item). */
+function versoes(k, it) {
+  if (k !== 'live') return [it];
+  return (grupos().doItem.get(idOf(k, it)) || []).map((i) => catalog.live[i]);
+}
+
+/**
+ * Mantem as versoes de cada canal juntas: mesma pasta e, ocultas, todas ou
+ * nenhuma. Na primeira vez, canal meio oculto fica todo visivel. Depois, versao
+ * nova que o provedor mandar segue o que o canal ja tinha.
+ */
+function unificarCanais() {
+  const primeira = !state.opts.liveGroups;
+  let mudou = 0;
+  for (const g of [...grupos().porChave.values()]) {
+    if (g.length < 2) continue;
+    const its = g.map((i) => catalog.live[i]);
+    const visiveis = its.filter((it) => !isHidden('live', it));
+    const ref = primeira
+      ? visiveis[0] || its[0]
+      : its.find((it) => ov('live', idOf('live', it))?.c) || its.find((it) => ov('live', idOf('live', it))) || its[0];
+    const cat = effCat('live', ref);
+    // Ocultar e por versao (h); a pasta oculta ja vale para todas.
+    const oculto = primeira ? null : its.some((it) => ov('live', idOf('live', it))?.h);
+    for (const it of its) {
+      const id = idOf('live', it);
+      const ch = {};
+      if (effCat('live', it) !== cat) ch.c = cat;
+      const h = !!ov('live', id)?.h;
+      if (primeira ? h && visiveis.length : h !== oculto) ch.h = primeira ? null : oculto ? 1 : null;
+      if (Object.keys(ch).length) {
+        patch('live', id, ch);
+        mudou++;
+      }
+    }
+  }
+  if (primeira) {
+    state.opts.liveGroups = 1;
+    dirty = true;
+  }
+  return mudou;
 }
 
 /* ------------------------------------------------------------------ render */
@@ -240,7 +330,7 @@ function renderCats() {
 
   const all = el('li', curCat === 'all' ? 'active' : '');
   all.append(el('span', 'grip', ' '), el('span', 'cname', 'Todos os itens'),
-             el('span', 'cnum', catalog[kind].length.toLocaleString('pt-BR')));
+             el('span', 'cnum', (kind === 'live' ? grupos().porChave.size : catalog[kind].length).toLocaleString('pt-BR')));
   all.addEventListener('click', () => { curCat = 'all'; clearSel(); renderCats(); renderList(); closeDrawer(); });
   bindCatDrop(all, null);
   ul.append(all);
@@ -374,7 +464,7 @@ function normalizarPasta(k, catId) {
 
 /** Solta os itens selecionados antes (ou depois) da linha alvo. */
 function soltarItensEm(alvoIdx, depois) {
-  const ids = new Set(selected);
+  const ids = new Set(selectedItems().map((it) => idOf(kind, it)));
   if (!ids.size) return;
   const alvo = catalog[kind][alvoIdx];
   const destCat = effCat(kind, alvo);
@@ -453,6 +543,7 @@ function computeView() {
   const arr = catalog[kind];
   for (const i of sortedIndices(kind)) {
     const it = arr[i];
+    if (kind === 'live' && grupos().doItem.get(idOf(kind, it))[0] !== i) continue;
     if (curCat !== 'all' && effCat(kind, it) !== curCat) continue;
     if (!showHidden && isHidden(kind, it)) continue;
     if (q && !effName(kind, it).toLowerCase().includes(q)) continue;
@@ -499,7 +590,9 @@ function drawRows() {
     cb.addEventListener('click', (e) => { e.stopPropagation(); marcar(id, vi, e); });
     row.append(cb);
 
-    const name = el('span', 'rname', effName(kind, it));
+    const vers = versoes(kind, it);
+    const name = el('span', 'rname', vers.length > 1 ? separarQualidade(effName(kind, it)).base : effName(kind, it));
+    if (vers.length > 1) name.append(el('span', 'versions', `${vers.length} versões`));
     if (o && o.n) name.append(el('span', 'edited', '✎'));
     row.append(name);
 
@@ -601,7 +694,11 @@ function updateSelInfo() {
 
 function selectedItems() {
   const set = selected;
-  return catalog[kind].filter((it) => set.has(idOf(kind, it)));
+  const out = catalog[kind].filter((it) => set.has(idOf(kind, it)));
+  if (kind !== 'live') return out;
+  const todas = new Map();
+  for (const it of out) for (const v of versoes(kind, it)) todas.set(idOf(kind, v), v);
+  return [...todas.values()];
 }
 
 /* ---------------------------------------------------------------- acoes */
@@ -639,6 +736,8 @@ function pickFolder(title, onPick) {
 }
 
 function renameOne(it) {
+  const vers = versoes(kind, it);
+  if (vers.length > 1) return renameChannel(vers);
   const id = idOf(kind, it);
   modal(
     `<h2>Renomear</h2><label>Nome</label>
@@ -659,6 +758,39 @@ function renameOne(it) {
 }
 
 /** Monta a funcao que transforma um nome, a partir dos valores ja lidos da tela. */
+/** Renomeia o canal inteiro: "GNT" vira "GNT HD", "GNT FHD"... (a TV usa a qualidade para escolher). */
+function renameChannel(vers) {
+  modal(
+    `<h2>Renomear canal</h2><label>Nome (vale para as ${vers.length} versões)</label>
+     <input type="text" id="rn" value="${escapeHtml(separarQualidade(effName(kind, vers[0])).base)}">
+     <div class="modal-actions">
+       <button data-close class="ghost">Cancelar</button>
+       <button id="rn-reset" class="ghost">Restaurar original</button>
+       <button id="rn-ok" class="primary">Salvar</button>
+     </div>`,
+    (box, close) => {
+      const input = box.querySelector('#rn');
+      const save = () => {
+        const base = input.value.trim();
+        if (!base) return;
+        for (const v of vers) {
+          const q = separarQualidade(v.name || '').q;
+          const nome = q ? `${base} ${q}` : base;
+          patch(kind, idOf(kind, v), { n: nome === v.name ? null : nome });
+        }
+        close();
+        renderCats(); renderList();
+      };
+      box.querySelector('#rn-ok').addEventListener('click', save);
+      box.querySelector('#rn-reset').addEventListener('click', () => {
+        for (const v of vers) patch(kind, idOf(kind, v), { n: null });
+        close(); renderCats(); renderList();
+      });
+      onEnter(input, save);
+    }
+  );
+}
+
 function criarTransformador({ achar, trocar, apagar, prefixo, sufixo, regex, caixa }) {
   return (nome) => {
     let out = nome;
@@ -1046,6 +1178,7 @@ async function sync() {
     for (const k of KINDS) seedCats(k);
     dirty = true;
     invalidateOrder();
+    avisarUnificacao(unificarCanais());
 
     prog.done('Catálogo atualizado. Agora edite e clique em Publicar.');
     renderTabs(); renderCats(); renderList(); showSync(Date.now());
@@ -1053,6 +1186,10 @@ async function sync() {
     prog.log('ERRO: ' + e.message);
     prog.done('Falhou. Veja o erro acima.');
   }
+}
+
+function avisarUnificacao(n) {
+  if (n) toast(`${n} versão(ões) de canais ajustada(s) para ficar junto com o canal. Clique em Publicar para valer na TV.`, 7000);
 }
 
 function showSync(ts) {
@@ -1358,6 +1495,7 @@ async function loadAll() {
   }
   for (const k of KINDS) seedCats(k);
   invalidateOrder();
+  avisarUnificacao(unificarCanais());
 
   aplicarSelMode();
   renderTabs(); renderCats(); renderList();
@@ -1486,6 +1624,7 @@ $('#bulkbar').addEventListener('click', (e) => {
     for (const it of selectedItems()) state.items[kind][idOf(kind, it)] &&
       patch(kind, idOf(kind, it), { n: null, c: null, h: null });
     dirty = true;
+    if (kind === 'live') unificarCanais();
     renderCats(); renderList(); toast('Itens restaurados ao original');
   }
   if (act === 'top' || act === 'bottom') itensParaExtremo(act === 'top');
