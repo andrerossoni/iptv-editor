@@ -264,6 +264,19 @@ seguem automaticamente a pasta e o nome que você deu para a série.
 
 ---
 
+## Trocar de provedor
+
+Dê dois cliques em **`trocar-provedor.command`** e cole o link do provedor novo.
+O seu link do player continua o mesmo.
+
+Depois, no editor, clique em **Sincronizar**. O editor percebe que o provedor
+mudou e leva cada pasta, nome e item oculto para o item de mesmo nome no
+provedor novo (ignorando acento, FHD/4K, ano e "Dublado"). No fim ele lista o
+que ficou sem par. O que só o provedor novo tem vai para **Sem pasta**.
+Confira e clique em **Publicar**.
+
+---
+
 ## Segurança
 
 - O código pode ficar num repositório **público** sem problema: ele não contém

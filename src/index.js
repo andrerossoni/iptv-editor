@@ -332,6 +332,21 @@ async function handleAdminApi(env, request, url) {
     }
   }
 
+  // Foto do catalogo do provedor (ids, nomes e pastas originais). Se o
+  // provedor mudar, o editor usa esta foto para levar as suas edicoes para os
+  // itens equivalentes do provedor novo.
+  if (path === '/snap') {
+    if (request.method === 'GET') {
+      const snap = await env.IPTV.get('snap:catalog', { type: 'stream' });
+      if (!snap) return json(null);
+      return new Response(snap, { headers: JSON_HEADERS });
+    }
+    if (request.method === 'PUT') {
+      await env.IPTV.put('snap:catalog', request.body);
+      return json({ ok: true });
+    }
+  }
+
   // Gravacao dos blobs ja prontos, vindos do editor.
   if (path === '/pub' && request.method === 'PUT') {
     const key = url.searchParams.get('key');

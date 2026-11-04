@@ -1157,23 +1157,213 @@ const UPSTREAM = {
   series: { cats: 'get_series_categories', items: 'get_series' },
 };
 
+/* ------------------------------------------------- troca de provedor */
+
+/**
+ * As suas edicoes ficam presas ao numero (id) de cada item no provedor. Outro
+ * provedor numera tudo diferente, entao guardamos uma "foto" do catalogo
+ * (id, nome e pasta originais) e, quando o provedor muda, levamos cada edicao
+ * para o item de mesmo nome no provedor novo.
+ */
+const fotoDe = (cat, cats) => ({
+  v: 1,
+  at: Date.now(),
+  host: info?.upstreamHost || '',
+  items: Object.fromEntries(KINDS.map((k) => [k, (cat[k] || []).map((it) => [idOf(k, it), it.name || it.title || '', String(it.category_id ?? '')])])),
+  cats: Object.fromEntries(KINDS.map((k) => [k, (cats[k] || []).map((c) => [String(c.category_id), c.category_name || ''])])),
+});
+
+async function salvarFoto(cat, cats) {
+  if (!KINDS.some((k) => cat[k]?.length)) return;
+  await api('/snap', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fotoDe(cat, cats)) });
+  await idbSet('snapAt', Date.now());
+}
+
+/** Sem catalogo guardado neste navegador: monta a foto com a lista publicada (nomes ja editados). */
+async function fotoDaListaPublicada() {
+  const q = `username=${encodeURIComponent(info.playlistUser)}&password=${encodeURIComponent(info.playlistPass)}`;
+  const get = async (action) => {
+    const r = await fetch(`/player_api.php?${q}&action=${action}`);
+    const d = r.ok ? await r.json() : [];
+    return Array.isArray(d) ? d : [];
+  };
+  const cat = {}, cats = {};
+  for (const k of KINDS) {
+    cats[k] = await get(UPSTREAM[k].cats);
+    cat[k] = await get(UPSTREAM[k].items);
+  }
+  return fotoDe(cat, cats);
+}
+
+/** Titulo sem acento, qualidade, idioma e pontuacao, para comparar entre provedores. */
+function chaveTitulo(nome, semAno) {
+  let s = String(nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(dublado|legendado|dub|leg|dual\s*audio|nacional)\b/g, ' ')
+    .replace(/&/g, ' e ').replace(/\+/g, ' plus ').replace(QUALIDADE, ' ');
+  if (semAno) s = s.replace(/\(?\b(19|20)\d{2}\b\)?/g, ' ');
+  s = s.replace(/[^a-z0-9]+/g, ' ').replace(/\b0+(\d)/g, '$1').trim();
+  return s;
+}
+
+/** Chaves do mais exigente para o mais solto; o primeiro nivel que casar vale. */
+function chavesDe(k, nome) {
+  const exata = String(nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const chaves = k === 'live' ? [exata, chaveCanal(nome)] : [exata, chaveTitulo(nome), chaveTitulo(nome, true)];
+  // nome so com letras nao latinas (grego, persa...) fica vazio: compara o nome cru
+  return chaves.map((ch) => ch || String(nome || '').trim().toLowerCase());
+}
+
+/** Quantos itens da foto continuam no catalogo novo com o mesmo id e o mesmo nome. */
+function mesmoProvedor(foto) {
+  let total = 0, iguais = 0;
+  for (const k of KINDS) {
+    const atual = new Map(catalog[k].map((it) => [idOf(k, it), chaveTitulo(it.name || it.title)]));
+    for (const [id, nome] of foto.items[k] || []) {
+      total++;
+      if (atual.get(id) === chaveTitulo(nome)) iguais++;
+    }
+  }
+  return !total || iguais / total >= 0.5;
+}
+
+/**
+ * Leva as edicoes da foto antiga para o catalogo novo (ja carregado em `catalog`).
+ * Devolve um resumo por tipo e os itens editados que nao acharam par.
+ */
+function migrarProvedor(foto) {
+  const resumo = {};
+  for (const k of KINDS) {
+    const velhos = foto.items[k] || [];
+    const novos = catalog[k];
+    const velhoItems = state.items[k];
+    const novoItems = {};
+
+    // indice do catalogo novo, um mapa por nivel de chave
+    const niveis = chavesDe(k, '').length;
+    const indice = Array.from({ length: niveis }, () => new Map());
+    for (const it of novos) {
+      chavesDe(k, it.name || it.title).forEach((ch, n) => {
+        if (!ch) return;
+        if (!indice[n].has(ch)) indice[n].set(ch, []);
+        indice[n].get(ch).push(idOf(k, it));
+      });
+    }
+
+    const usados = new Set();
+    const par = new Map(); // id velho -> id novo
+    for (let n = 0; n < niveis; n++) {
+      for (const [id, nome] of velhos) {
+        if (par.has(id)) continue;
+        const ch = chavesDe(k, nome)[n];
+        const cands = ch && indice[n].get(ch);
+        if (!cands) continue;
+        // prefere um item ainda livre; versoes a mais do canal ficam com o canal
+        const livre = cands.find((c) => !usados.has(c));
+        if (!livre && k !== 'live') continue;
+        const alvo = livre || cands[0];
+        usados.add(alvo);
+        par.set(id, alvo);
+      }
+    }
+
+    let levados = 0;
+    const perdidos = [];
+    for (const [id, nome, catOrig] of velhos) {
+      const o = { ...(velhoItems[id] || {}) };
+      // a pasta original do provedor antigo nao existe no novo: fica explicita
+      if (!o.c && catById(k, catOrig)) o.c = catOrig;
+      const alvo = par.get(id);
+      if (!alvo) {
+        if (velhoItems[id]) perdidos.push(velhoItems[id].n || nome);
+        continue;
+      }
+      levados++;
+      if (novoItems[alvo]) continue; // outra versao do mesmo canal ja chegou
+      if (Object.keys(o).length) novoItems[alvo] = o;
+    }
+
+    // itens que so o provedor novo tem: vao para a sua pasta de mesmo nome, se houver
+    const pastaVelha = new Map();
+    for (const [cid, nome] of foto.cats[k] || []) {
+      const ch = chaveTitulo(nome);
+      if (ch && catById(k, cid) && !pastaVelha.has(ch)) pastaVelha.set(ch, cid);
+    }
+    for (const c of catsOf(k)) {
+      const ch = chaveTitulo(c.name);
+      if (ch && !pastaVelha.has(ch)) pastaVelha.set(ch, c.id);
+    }
+    const nomePastaNova = new Map(origCats[k].map((c) => [String(c.category_id), c.category_name]));
+    let novosSoltos = 0;
+    for (const it of novos) {
+      const id = idOf(k, it);
+      if (novoItems[id] || usados.has(id)) continue;
+      const cid = pastaVelha.get(chaveTitulo(nomePastaNova.get(String(it.category_id ?? ''))));
+      if (cid) novoItems[id] = { c: cid };
+      else novosSoltos++;
+    }
+
+    state.items[k] = novoItems;
+    resumo[k] = { antes: velhos.length, levados, perdidos, novosSoltos };
+  }
+  dirty = true;
+  invalidateOrder();
+  grupoCache = null;
+  return resumo;
+}
+
+function relatarMigracao(resumo) {
+  prog.log('');
+  prog.log('PROVEDOR NOVO: as suas edições foram levadas pelo nome dos itens.');
+  for (const k of KINDS) {
+    const r = resumo[k];
+    prog.log(`${LABEL[k]}: ${r.levados.toLocaleString('pt-BR')} de ${r.antes.toLocaleString('pt-BR')} itens acharam par.`
+      + (r.novosSoltos ? ` ${r.novosSoltos.toLocaleString('pt-BR')} itens novos foram para "Sem pasta".` : ''));
+    if (r.perdidos.length) {
+      prog.log(`  Editados sem par (${r.perdidos.length}):`);
+      for (const n of r.perdidos.slice(0, 60)) prog.log('   · ' + n);
+      if (r.perdidos.length > 60) prog.log(`   … e mais ${r.perdidos.length - 60}.`);
+    }
+  }
+}
+
 async function sync() {
   prog.open('Sincronizando com o provedor');
   try {
+    // Foto do catalogo atual, antes de trocar: serve se o provedor tiver mudado.
+    let foto = KINDS.some((k) => catalog[k].length) ? fotoDe(catalog, origCats) : await apiJson('/snap').catch(() => null);
+
     let step = 0;
+    const novoCat = {}, novasPastas = {};
+    const baixar = async (action) => {
+      const d = await apiJson(`/upstream?action=${action}`);
+      if (!Array.isArray(d)) throw new Error('O provedor não mandou a lista. Ele pode estar fora do ar ou com a senha errada.');
+      return d;
+    };
     for (const k of KINDS) {
       prog.set((step / 6) * 100, `Baixando pastas de ${LABEL[k]}…`);
-      origCats[k] = await apiJson(`/upstream?action=${UPSTREAM[k].cats}`);
+      novasPastas[k] = await baixar(UPSTREAM[k].cats);
       step++;
       prog.set((step / 6) * 100, `Baixando itens de ${LABEL[k]}…`);
-      catalog[k] = await apiJson(`/upstream?action=${UPSTREAM[k].items}`);
+      novoCat[k] = await baixar(UPSTREAM[k].items);
       step++;
-      prog.log(`${LABEL[k]}: ${catalog[k].length.toLocaleString('pt-BR')} itens em ${origCats[k].length} pastas`);
+      prog.log(`${LABEL[k]}: ${novoCat[k].length.toLocaleString('pt-BR')} itens em ${novasPastas[k].length} pastas`);
+    }
+    // so troca depois de tudo baixado: se o provedor falhar no meio, nada se perde
+    for (const k of KINDS) { catalog[k] = novoCat[k]; origCats[k] = novasPastas[k]; }
+
+    const temEdicao = KINDS.some((k) => Object.keys(state.items[k]).length || state.cats[k].length);
+    if (!foto && temEdicao) foto = await fotoDaListaPublicada().catch(() => null);
+    if (foto && temEdicao && !mesmoProvedor(foto)) {
+      prog.set(97, 'Provedor novo: levando as suas edições…');
+      relatarMigracao(migrarProvedor(foto));
     }
 
     await idbSet('catalog', catalog);
     await idbSet('origCats', origCats);
     await idbSet('syncedAt', Date.now());
+    await saveState().catch(() => {});
+    await salvarFoto(catalog, origCats).catch((e) => prog.log('Aviso: não consegui guardar a foto do catálogo (' + e.message + ').'));
 
     for (const k of KINDS) seedCats(k);
     dirty = true;
@@ -1489,7 +1679,10 @@ async function loadAll() {
   if (cached) {
     catalog = cached;
     origCats = (await idbGet('origCats')) || origCats;
-    showSync(await idbGet('syncedAt'));
+    const syncedAt = await idbGet('syncedAt');
+    showSync(syncedAt);
+    // Garante a foto do catalogo no servidor, para uma futura troca de provedor.
+    if (((await idbGet('snapAt')) || 0) < (syncedAt || 1)) salvarFoto(catalog, origCats).catch(() => {});
   } else {
     showSync(null);
   }
