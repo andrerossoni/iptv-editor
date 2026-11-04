@@ -47,10 +47,23 @@ const Player = {
     q('.p-rw').onclick = () => this.seekBy(-10);
     q('.p-ff').onclick = () => this.seekBy(30);
     q('.p-fs').onclick = () => native.toggleFullscreen();
+    this.ui.volRange = q('.p-volrange');
     this.ui.vol.onclick = () => {
-      v.muted = !v.muted;
-      this.ui.vol.innerHTML = v.muted ? ICON.mute : ICON.volume;
+      // Mudo com a barra no zero: o clique devolve um volume audivel.
+      if (v.muted || v.volume === 0) this.setVolume(v.volume || 0.5, false);
+      else this.setVolume(v.volume, true);
     };
+    this.ui.volRange.addEventListener('input', () => this.setVolume(this.ui.volRange.value / 100, false));
+    this.ui.volRange.addEventListener('keydown', (e) => e.preventDefault());
+    q('.p-volbox').addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.setVolume(v.volume + (e.deltaY < 0 ? 0.05 : -0.05), false);
+    });
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem('player-volume'));
+    } catch {}
+    this.setVolume(saved?.volume ?? 1, !!saved?.muted, false);
     this.ui.next.onclick = () => this.playNext();
     this.ui.channels.onclick = () => this.ui.side.classList.toggle('open');
 
@@ -85,6 +98,23 @@ const Player = {
       if (this.ui.side.contains(e.target)) return;
       this.poke();
     });
+  },
+
+  /** Volume de 0 a 1; fica guardado para a proxima vez que o app abrir. */
+  setVolume(vol, muted, save = true) {
+    const v = this.video;
+    vol = Math.round(Math.min(1, Math.max(0, vol)) * 100) / 100;
+    v.volume = vol;
+    v.muted = muted;
+    const shown = muted ? 0 : vol;
+    this.ui.vol.innerHTML = shown === 0 ? ICON.mute : ICON.volume;
+    this.ui.volRange.value = Math.round(shown * 100);
+    this.ui.volRange.style.setProperty('--v', `${shown * 100}%`);
+    if (!save) return;
+    try {
+      localStorage.setItem('player-volume', JSON.stringify({ volume: vol, muted }));
+    } catch {}
+    this.poke();
   },
 
   get open_() {
@@ -375,11 +405,21 @@ const Player = {
         break;
       case 'ArrowUp':
         if (this.session?.channels) this.switchChannel(-1);
-        else v.volume = Math.min(1, v.volume + 0.1);
+        else this.setVolume(v.volume + 0.1, false);
         break;
       case 'ArrowDown':
         if (this.session?.channels) this.switchChannel(1);
-        else v.volume = Math.max(0, v.volume - 0.1);
+        else this.setVolume(v.volume - 0.1, false);
+        break;
+      case '+':
+      case '=':
+        this.setVolume(v.volume + 0.1, false);
+        break;
+      case '-':
+        this.setVolume(v.volume - 0.1, false);
+        break;
+      case 'm':
+        this.ui.vol.click();
         break;
       case 'f':
         native.toggleFullscreen();

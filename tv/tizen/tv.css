@@ -418,3 +418,8 @@ body.tv #player.is-live .p-back {
 .tv-exit-box .actions {
   justify-content: center;
 }
+
+/* Na TV o volume e o do controle remoto. */
+body.tv .p-volrange {
+  display: none;
+}
