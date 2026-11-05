@@ -26,7 +26,12 @@ try {
 } catch {
   console.warn('Sem configuracao do app do Mac: informe servidor e usuario nos Ajustes da TV.');
 }
-const defaults = { server: cfg.server || '', user: cfg.user || '', pass: cfg.pass || '', tmdbKey: cfg.tmdbKey || '' };
+// Ajudante de miniaturas (tv/helper): roda neste Mac, a TV o acha pelo IP da rede de casa.
+const lanIp = Object.values(os.networkInterfaces())
+  .flat()
+  .find((i) => i && i.family === 'IPv4' && !i.internal && /^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))\./.test(i.address))?.address;
+const helper = process.env.IPTV_HELPER ?? (lanIp ? `http://${lanIp}:8790` : '');
+const defaults = { server: cfg.server || '', user: cfg.user || '', pass: cfg.pass || '', tmdbKey: cfg.tmdbKey || '', helper };
 fs.writeFileSync(path.join(out, 'defaults.js'), `window.IPTV_DEFAULTS = ${JSON.stringify(defaults)};\n`);
 
 let html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8');

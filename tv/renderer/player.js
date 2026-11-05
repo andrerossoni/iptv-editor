@@ -151,6 +151,7 @@ const Player = {
     this.ui.next.hidden = !opts.next;
     this.ui.channels.hidden = !opts.channels;
     this.setupSubs(opts);
+    this.helperStart(opts);
     this.ui.spinner.classList.add('on');
     this.ui.fill.style.width = '0';
     this.ui.buf.style.width = '0';
@@ -207,6 +208,8 @@ const Player = {
 
   stop() {
     if (this.scrub) this.endScrub();
+    clearInterval(this.helperTimer);
+    this.helperCall('stop');
     this.closeCcMenu();
     this.saveNow();
     clearInterval(this.epgTimer);
@@ -292,9 +295,9 @@ const Player = {
    */
   showThumb(s) {
     if (this.scrub !== s || !this.session) return;
-    // Na TV o segundo video disputa a unica camada de video com o AVPlay:
-    // o filme fica preto e a miniatura sai da moldura. La fica so o horario.
-    if (window.TvVideo) return this.ui.thumb.classList.add('off');
+    // Na TV o segundo video disputa a unica camada de video com o AVPlay
+    // (o filme ficava preto): la as fotos vem do ajudante no Mac (tv/helper).
+    if (window.TvVideo) return this.helperThumb(s);
     let pv = this.preview;
     if (!pv) {
       pv = this.preview = h('video', { class: 'p-thumbv', preload: 'auto', playsinline: true });
@@ -320,7 +323,68 @@ const Player = {
     else pv.addEventListener('loadedmetadata', go, { once: true });
   },
 
+  /* ------------------------------ miniaturas da TV (ajudante no Mac) */
+
+  helperBase() {
+    return (window.TvVideo && window.IPTV_DEFAULTS?.helper) || '';
+  },
+
+  helperCall(action, params = {}, session = this.session) {
+    const base = this.helperBase();
+    const r = session?.helperRef;
+    if (!base || !r) return;
+    fetch(`${base}/${action}?${new URLSearchParams({ kind: r.kind, id: r.id, ext: r.ext, ...params })}`).catch(() => {});
+  },
+
+  /** Avisa o ajudante onde o filme esta, para ele gerar as fotos dali para os lados. */
+  helperStart(opts) {
+    const m = /\/(movie|series)\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/.exec(opts.url || '');
+    if (!this.helperBase() || opts.kind === 'live' || !m) return;
+    opts.helperRef = { kind: m[1], id: m[2], ext: m[3] };
+    const v = this.video;
+    const beat = () => this.session === opts && this.helperCall('watch', { at: Math.round(this.scrub?.target ?? v.currentTime ?? 0), dur: Math.round(v.duration) || 0 }, opts);
+    beat();
+    this.helperTimer = setInterval(beat, 15000);
+    setTimeout(beat, 4000);
+  },
+
+  /** Foto do ponto do pino; enquanto o ajudante nao tem a exata, mostra a mais proxima e tenta de novo. */
+  helperThumb(s) {
+    const base = this.helperBase();
+    const r = this.session?.helperRef;
+    if (!base || !r) return this.ui.thumb.classList.add('off');
+    let img = this.thumbImg;
+    if (!img || !img.isConnected) {
+      img = this.thumbImg = h('img', { class: 'p-thumbimg', alt: '' });
+      this.ui.thumb.append(img);
+    }
+    const sec = Math.round(s.target);
+    this.ui.thumb.classList.add('stale');
+    clearTimeout(this.thumbRetry);
+    const attempt = async (n) => {
+      if (this.scrub !== s || Math.round(s.target) !== sec) return;
+      let at = null;
+      try {
+        const res = await fetch(`${base}/thumb/${r.kind}/${r.id}/${sec}.jpg`);
+        if (res.ok) {
+          at = +res.headers.get('x-thumb-at');
+          const url = URL.createObjectURL(await res.blob());
+          if (this.scrub !== s) return URL.revokeObjectURL(url);
+          if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+          img.src = url;
+          this.ui.thumb.classList.add('ready');
+          if (Math.abs(at - sec) <= 6) this.ui.thumb.classList.remove('stale');
+        }
+      } catch {}
+      // Ainda longe do ponto: o ajudante ja esta gerando ali, pede de novo.
+      if ((at == null || Math.abs(at - sec) > 6) && n < 12) this.thumbRetry = setTimeout(() => attempt(n + 1), 600);
+    };
+    attempt(0);
+  },
+
   releasePreview() {
+    clearTimeout(this.thumbRetry);
+    this.ui.thumb.classList.remove('stale');
     const pv = this.preview;
     this.preview = null;
     this.ui.thumb.classList.remove('ready', 'off');
@@ -342,6 +406,8 @@ const Player = {
     const s = this.scrub;
     if (!s) return;
     this.endScrub();
+    // O ajudante espera uns segundos: a TV precisa da conexao para pular.
+    this.helperCall('watch', { at: Math.round(s.target), hold: 6 });
     this.video.currentTime = s.target;
     this.video.play().catch(() => {});
     this.onTime();

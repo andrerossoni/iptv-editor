@@ -424,7 +424,19 @@ body.tv .p-volrange {
   display: none;
 }
 
-/* Sem miniatura na TV: o segundo video apagaria o filme (ver player.js). */
-body.tv .p-thumb {
+/* Miniatura da TV: foto do ajudante no Mac; so aparece quando ha uma. */
+body.tv .p-thumb:not(.ready) {
   display: none;
+}
+
+.p-thumbimg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Foto de um ponto proximo, enquanto a do ponto exato nao chega. */
+.p-thumb.stale .p-thumbimg {
+  opacity: 0.55;
 }
