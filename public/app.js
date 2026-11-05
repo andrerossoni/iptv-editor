@@ -1157,6 +1157,199 @@ const UPSTREAM = {
   series: { cats: 'get_series_categories', items: 'get_series' },
 };
 
+/* ------------------------------------------------- fonte em lista M3U */
+
+/**
+ * Quando a fonte e uma lista M3U (sem usuario e senha), o editor monta o
+ * catalogo sozinho: cada linha vira canal, filme ou episodio, e os episodios
+ * sao agrupados em series. Cada item ganha um numero fixo (tirado do endereco
+ * do video), para as suas edicoes continuarem valendo quando a lista atualizar.
+ */
+const modoM3u = () => info?.mode === 'm3u';
+
+/** Numero positivo de 31 bits a partir de um texto (FNV-1a). */
+function hash31(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 2147483646) + 1;
+}
+
+/** Numero unico dentro do mapa; se colidir, anda para o proximo. */
+function idLivre(usados, texto) {
+  let id = hash31(texto);
+  while (usados.has(id)) id = (id % 2147483646) + 1;
+  usados.add(id);
+  return id;
+}
+
+const attrM3u = (ex, nome) => (ex.match(new RegExp(`${nome}="([^"]*)"`, 'i')) || [])[1] || '';
+const EP_M3U = /^(.*?)[\s\-–:|]*(?:S(\d{1,3})\s?E(\d{1,4})|T(\d{1,3})\s?E(\d{1,4})|(\d{1,2})x(\d{1,3}))\b\s*[-–:]?\s*(.*)$/i;
+const EXT_VIDEO = /\.(mp4|mkv|avi|mov|m4v|wmv|flv|webm)$/i;
+
+/** Decide o tipo pela URL (/movie/, /series/, extensao) e pelo nome da pasta. */
+function tipoM3u(url, grupo, nome) {
+  const path = url.replace(/[?#].*$/, '');
+  if (/\/series\//i.test(path) || (EP_M3U.test(nome) && !/\/live\//i.test(path))) return 'ep';
+  if (/\/movie\//i.test(path)) return 'vod';
+  if (/\/live\//i.test(path)) return 'live';
+  if (EXT_VIDEO.test(path)) return /s[eé]rie|novela|anime|desenho/i.test(grupo) && EP_M3U.test(nome) ? 'ep' : 'vod';
+  if (/filme|movie|vod|cinema/i.test(grupo) && !/\.m3u8$|\.ts$/i.test(path)) return 'vod';
+  return 'live';
+}
+
+/** Le a lista M3U (stream de texto) e devolve catalogo e pastas no formato Xtream. */
+async function lerM3u(textStream, aoProgresso) {
+  const cat = { live: [], vod: [], series: [] };
+  const pastas = { live: new Map(), vod: new Map(), series: new Map() };
+  const usados = { live: new Set(), vod: new Set(), series: new Set(), ep: new Set() };
+  const seriePorNome = new Map();
+  let epgUrl = '', extinf = null, rest = '', bytes = 0, lastPaint = 0, num = 0;
+
+  const pasta = (k, nome) => {
+    nome = nome || 'Sem grupo';
+    if (!pastas[k].has(nome)) pastas[k].set(nome, String(hash31(`${k}|${nome}`) % 900000000 + 1000));
+    return pastas[k].get(nome);
+  };
+
+  const linha = (l) => {
+    if (l.startsWith('#EXTM3U')) { epgUrl = attrM3u(l, 'url-tvg') || attrM3u(l, 'x-tvg-url') || epgUrl; return; }
+    if (l.startsWith('#EXTINF')) { extinf = l; return; }
+    if (!l || l.startsWith('#') || !extinf) return;
+    const ex = extinf; extinf = null;
+    if (!/^(https?|rtmp|rtsp):\/\//i.test(l)) return;
+
+    const q = ex.lastIndexOf('"');
+    const titulo = ex.slice(ex.indexOf(',', q < 0 ? 0 : q) + 1).trim();
+    const nome = titulo || attrM3u(ex, 'tvg-name') || 'Sem nome';
+    const grupo = attrM3u(ex, 'group-title').trim();
+    const logo = attrM3u(ex, 'tvg-logo');
+    const chave = l.replace(/[?#].*$/, '');  // o endereco sem o token muda pouco entre atualizacoes
+    const ext = (chave.match(/\.([a-z0-9]{2,4})$/i) || [])[1] || '';
+    const tipo = tipoM3u(l, grupo, nome);
+
+    if (tipo === 'live') {
+      cat.live.push({ num: ++num, name: nome, stream_type: 'live', stream_id: idLivre(usados.live, chave), stream_icon: logo,
+        epg_channel_id: attrM3u(ex, 'tvg-id'), category_id: pasta('live', grupo), direct_source: l });
+    } else if (tipo === 'vod') {
+      cat.vod.push({ num: ++num, name: nome, stream_type: 'movie', stream_id: idLivre(usados.vod, chave), stream_icon: logo,
+        category_id: pasta('vod', grupo), container_extension: ext || 'mp4', direct_source: l });
+    } else {
+      const m = EP_M3U.exec(nome);
+      const serie = (m ? m[1] : nome).replace(/[\s\-–:|]+$/, '').trim() || nome;
+      const temporada = +(m?.[2] || m?.[4] || m?.[6] || 1);
+      const episodio = +(m?.[3] || m?.[5] || m?.[7] || 0);
+      const sk = `${chaveTitulo(serie)}|${grupo}`;
+      let s = seriePorNome.get(sk);
+      if (!s) {
+        s = { num: ++num, name: serie, series_id: idLivre(usados.series, `serie|${sk}`), cover: logo, plot: '', category_id: pasta('series', grupo), _eps: [] };
+        seriePorNome.set(sk, s);
+        cat.series.push(s);
+      }
+      s._eps.push({ id: idLivre(usados.ep, chave), season: temporada, episode_num: episodio || s._eps.length + 1,
+        title: nome, container_extension: ext || 'mp4', url: l });
+    }
+  };
+
+  const reader = textStream.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.length;
+    rest += value;
+    const lines = rest.split('\n');
+    rest = lines.pop();
+    for (const l of lines) linha(l.trim());
+    if (aoProgresso && Date.now() - lastPaint > 400) {
+      lastPaint = Date.now();
+      aoProgresso(bytes);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  if (rest.trim()) linha(rest.trim());
+
+  const origens = Object.fromEntries(KINDS.map((k) => [k, [...pastas[k]].map(([nome, id]) => ({ category_id: id, category_name: nome, parent_id: 0 }))]));
+  return { cat, cats: origens, epgUrl };
+}
+
+/** Baixa a lista M3U pelo Worker ou le o arquivo escolhido no computador. */
+async function baixarM3u(arquivo) {
+  let stream;
+  if (arquivo) stream = arquivo.stream().pipeThrough(new TextDecoderStream());
+  else {
+    const res = await fetch('/api/admin/upstream-m3u', { headers: { authorization: 'Bearer ' + token } });
+    if (!res.ok) {
+      const motivo = res.status === 401 || res.status === 403 ? 'recusou o acesso' : `respondeu ${res.status}`;
+      throw new Error(`O servidor da lista ${motivo}. Se a lista abre no seu navegador ou player, baixe o arquivo .m3u e use "Abrir arquivo .m3u".`);
+    }
+    stream = res.body.pipeThrough(new TextDecoderStream());
+  }
+  const r = await lerM3u(stream, (b) => prog.set(5 + Math.min(85, (b / 80e6) * 85), `Lendo a lista… ${(b / 1048576).toFixed(1)} MB`));
+  if (!KINDS.some((k) => r.cat[k].length)) throw new Error('A lista veio vazia ou não é um arquivo M3U.');
+  return r;
+}
+
+/* ---- publicacao no modo M3U: endereco de cada video e episodios das series */
+
+const PARTES_URL = 8, PARTES_SERIE = 16;
+
+/** Blob em linhas "id<TAB>valor", com \n no comeco: o Worker acha o id sem ler JSON. */
+function blobLinhas(pares) {
+  return '\n' + pares.map(([id, v]) => `${id}\t${v}`).join('\n') + '\n';
+}
+
+async function publicarM3u(built) {
+  const partes = (n) => Array.from({ length: n }, () => []);
+  const url = { live: partes(PARTES_URL), vod: partes(PARTES_URL), ep: partes(PARTES_URL) };
+  for (const it of catalog.live) url.live[it.stream_id % PARTES_URL].push([it.stream_id, it.direct_source]);
+  for (const it of catalog.vod) url.vod[it.stream_id % PARTES_URL].push([it.stream_id, it.direct_source]);
+
+  const detalhes = partes(PARTES_SERIE);
+  const pastaNome = new Map(built.series.cats.map((c) => [c.category_id, c.category_name]));
+  const porId = new Map(catalog.series.map((s) => [s.series_id, s]));
+  let eps = 0;
+  for (const pub of built.series.all) {
+    const s = porId.get(pub.series_id);
+    if (!s) continue;
+    const episodios = {};
+    for (const e of [...s._eps].sort((a, b) => a.season - b.season || a.episode_num - b.episode_num)) {
+      url.ep[e.id % PARTES_URL].push([e.id, e.url]);
+      (episodios[e.season] ||= []).push({ id: String(e.id), episode_num: e.episode_num, title: e.title.replace(s.name, pub.name),
+        container_extension: e.container_extension, season: e.season, info: {} });
+      eps++;
+    }
+    const detalhe = {
+      info: { name: pub.name, cover: pub.cover || '', plot: '', genre: pastaNome.get(pub.category_id) || '', category_id: pub.category_id },
+      seasons: Object.keys(episodios).map((n) => ({ season_number: +n, name: `Temporada ${n}`, episode_count: episodios[n].length })),
+      episodes: episodios,
+    };
+    detalhes[pub.series_id % PARTES_SERIE].push([pub.series_id, JSON.stringify(detalhe)]);
+  }
+
+  for (const k of ['live', 'vod', 'ep']) {
+    for (let i = 0; i < PARTES_URL; i++) await putBlob(`u:${k}:${i}`, blobLinhas(url[k][i]));
+  }
+  for (let i = 0; i < PARTES_SERIE; i++) await putBlob(`si:${i}`, blobLinhas(detalhes[i]));
+  prog.log(`Endereços dos vídeos guardados (${eps.toLocaleString('pt-BR')} episódios).`);
+}
+
+/** Episodios no M3U publicado, com o nome e a pasta que voce deu a serie. */
+async function episodiosNoM3u(built, writer, base, pu, pp) {
+  const pastaNome = new Map(built.series.cats.map((c) => [c.category_id, c.category_name]));
+  const porId = new Map(catalog.series.map((s) => [s.series_id, s]));
+  let n = 0;
+  for (const pub of built.series.all) {
+    const s = porId.get(pub.series_id);
+    if (!s) continue;
+    for (const e of s._eps) {
+      const nome = e.title.replace(s.name, pub.name);
+      await writer.add(`#EXTINF:-1 tvg-name="${nome}" tvg-logo="${pub.cover || ''}" group-title="${pastaNome.get(pub.category_id) || ''}",${nome}\n`
+        + `${base}/series/${pu}/${pp}/${e.id}.${e.container_extension}\n`);
+      n++;
+    }
+  }
+  return n;
+}
+
 /* ------------------------------------------------- troca de provedor */
 
 /**
@@ -1216,15 +1409,17 @@ function chavesDe(k, nome) {
 
 /** Quantos itens da foto continuam no catalogo novo com o mesmo id e o mesmo nome. */
 function mesmoProvedor(foto) {
-  let total = 0, iguais = 0;
+  let total = 0, iguais = 0, novos = 0;
   for (const k of KINDS) {
+    novos += catalog[k].length;
     const atual = new Map(catalog[k].map((it) => [idOf(k, it), chaveTitulo(it.name || it.title)]));
     for (const [id, nome] of foto.items[k] || []) {
       total++;
       if (atual.get(id) === chaveTitulo(nome)) iguais++;
     }
   }
-  return !total || iguais / total >= 0.5;
+  // compara com a menor das duas listas: lista que so encolheu continua sendo a mesma
+  return !total || iguais / Math.max(1, Math.min(total, novos)) >= 0.5;
 }
 
 /**
@@ -1327,20 +1522,52 @@ function relatarMigracao(resumo) {
   }
 }
 
-async function sync() {
-  prog.open('Sincronizando com o provedor');
+/**
+ * Item novo numa pasta do provedor que nao e uma das suas pastas: vai para a
+ * pasta onde estao os outros itens daquela pasta do provedor (a mais comum).
+ * Sem isso, todo canal ou filme novo cairia em "Sem pasta".
+ */
+function encaixarNovos() {
+  let n = 0;
+  for (const k of KINDS) {
+    const votos = new Map();
+    for (const it of catalog[k]) {
+      const c = ov(k, idOf(k, it))?.c;
+      if (!c || c === UNCAT || !catById(k, c)) continue;
+      const orig = String(it.category_id ?? '');
+      if (!votos.has(orig)) votos.set(orig, new Map());
+      const v = votos.get(orig);
+      v.set(c, (v.get(c) || 0) + 1);
+    }
+    for (const it of catalog[k]) {
+      const id = idOf(k, it);
+      const orig = String(it.category_id ?? '');
+      if (ov(k, id) || catById(k, orig) || !votos.has(orig)) continue;
+      const [dest] = [...votos.get(orig)].sort((a, b) => b[1] - a[1])[0];
+      patch(k, id, { c: dest });
+      n++;
+    }
+  }
+  return n;
+}
+
+async function sync(arquivo) {
+  prog.open(arquivo ? 'Lendo o arquivo da lista' : 'Sincronizando com o provedor');
   try {
     // Foto do catalogo atual, antes de trocar: serve se o provedor tiver mudado.
     let foto = KINDS.some((k) => catalog[k].length) ? fotoDe(catalog, origCats) : await apiJson('/snap').catch(() => null);
 
     let step = 0;
-    const novoCat = {}, novasPastas = {};
+    let novoCat = {}, novasPastas = {}, epgUrl = '';
     const baixar = async (action) => {
       const d = await apiJson(`/upstream?action=${action}`);
       if (!Array.isArray(d)) throw new Error('O provedor não mandou a lista. Ele pode estar fora do ar ou com a senha errada.');
       return d;
     };
-    for (const k of KINDS) {
+    if (modoM3u() || arquivo) {
+      ({ cat: novoCat, cats: novasPastas, epgUrl } = await baixarM3u(arquivo));
+      for (const k of KINDS) prog.log(`${LABEL[k]}: ${novoCat[k].length.toLocaleString('pt-BR')} itens em ${novasPastas[k].length} pastas`);
+    } else for (const k of KINDS) {
       prog.set((step / 6) * 100, `Baixando pastas de ${LABEL[k]}…`);
       novasPastas[k] = await baixar(UPSTREAM[k].cats);
       step++;
@@ -1351,6 +1578,7 @@ async function sync() {
     }
     // so troca depois de tudo baixado: se o provedor falhar no meio, nada se perde
     for (const k of KINDS) { catalog[k] = novoCat[k]; origCats[k] = novasPastas[k]; }
+    state.opts.epgUrl = epgUrl || null;
 
     const temEdicao = KINDS.some((k) => Object.keys(state.items[k]).length || state.cats[k].length);
     if (!foto && temEdicao) foto = await fotoDaListaPublicada().catch(() => null);
@@ -1359,16 +1587,18 @@ async function sync() {
       relatarMigracao(migrarProvedor(foto));
     }
 
+    for (const k of KINDS) seedCats(k);
+    const encaixados = encaixarNovos();
+    if (encaixados) prog.log(`${encaixados.toLocaleString('pt-BR')} itens novos foram para a pasta dos outros do mesmo grupo.`);
+    dirty = true;
+    invalidateOrder();
+    avisarUnificacao(unificarCanais());
+
     await idbSet('catalog', catalog);
     await idbSet('origCats', origCats);
     await idbSet('syncedAt', Date.now());
     await saveState().catch(() => {});
     await salvarFoto(catalog, origCats).catch((e) => prog.log('Aviso: não consegui guardar a foto do catálogo (' + e.message + ').'));
-
-    for (const k of KINDS) seedCats(k);
-    dirty = true;
-    invalidateOrder();
-    avisarUnificacao(unificarCanais());
 
     prog.done('Catálogo atualizado. Agora edite e clique em Publicar.');
     renderTabs(); renderCats(); renderList(); showSync(Date.now());
@@ -1413,6 +1643,7 @@ function buildPublished(k) {
 
     const out = { ...it, num: num++, name, category_id: cat, category_ids: [Number(cat)] };
     if (k !== 'series') out.direct_source = '';
+    else delete out._eps;
     if ('title' in out) out.title = name;
     all.push(out);
     byCat.get(cat).push(out);
@@ -1457,7 +1688,7 @@ async function publish() {
     const base = info.base, pu = encodeURIComponent(info.playlistUser), pp = encodeURIComponent(info.playlistPass);
 
     prog.set(2, 'Limpando a publicação anterior…');
-    for (const p of ['cat:', 'st:', 'm3u:', 'names:']) {
+    for (const p of ['cat:', 'st:', 'm3u:', 'names:', 'u:', 'si:']) {
       await api(`/pub?prefix=${encodeURIComponent(p)}`, { method: 'DELETE' });
     }
 
@@ -1477,18 +1708,24 @@ async function publish() {
       pct += 12;
     }
 
+    if (modoM3u()) {
+      prog.set(42, 'Guardando o endereço de cada vídeo…');
+      await publicarM3u(built);
+    }
+
     // ---- M3U -------------------------------------------------------------
     prog.set(46, 'Gerando o arquivo M3U…');
     const writer = chunkWriter((i, body) => putBlob(`m3u:${i}`, body));
     await writer.add('#EXTM3U\n');
 
-    if (!includeSeries) {
+    if (!includeSeries || modoM3u()) {
       for (const k of ['live', 'vod']) {
         const catName = new Map(built[k].cats.map((c) => [c.category_id, c.category_name]));
         for (const it of built[k].all) await writer.add(m3uLine(base, pu, pp, k, it, catName.get(it.category_id) || ''));
       }
+      if (includeSeries) prog.log(`M3U: ${(await episodiosNoM3u(built, writer, base, pu, pp)).toLocaleString('pt-BR')} episódios de série`);
       await writer.flush();
-      prog.log(`M3U: ao vivo + filmes (sem episódios de série)`);
+      if (!includeSeries) prog.log(`M3U: ao vivo + filmes (sem episódios de série)`);
     } else {
       await buildFullM3u(built, writer, base, pu, pp);
     }
@@ -1498,6 +1735,7 @@ async function publish() {
       m3uChunks: writer.count,
       counts: Object.fromEntries(KINDS.map((k) => [k, built[k].all.length])),
       m3uSeries: includeSeries,
+      epgUrl: (modoM3u() && state.opts.epgUrl) || undefined,
     };
     await putBlob('meta', JSON.stringify(meta));
 
@@ -1668,6 +1906,7 @@ async function saveState() {
 
 async function loadAll() {
   info = await apiJson('/info');
+  $('#btn-m3u-file').hidden = !modoM3u();
 
   const saved = await apiJson('/state').catch(() => null);
   state = saved && saved.cats ? saved : newState();
@@ -1749,6 +1988,13 @@ $('#tabs').addEventListener('click', (e) => {
 $('#btn-sync').addEventListener('click', () => {
   if (catalog.live.length && !confirm('Rebaixar o catálogo do provedor? As suas edições são mantidas.')) return;
   sync();
+});
+// Lista M3U que so abre no seu aparelho: voce baixa o arquivo e o editor le daqui.
+$('#btn-m3u-file').addEventListener('click', () => $('#m3u-file').click());
+$('#m3u-file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) sync(f);
 });
 $('#btn-publish').addEventListener('click', publish);
 $('#btn-link').addEventListener('click', showLink);

@@ -38,6 +38,44 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
+/** Fonte em lista M3U (sem usuario e senha), em vez de um provedor Xtream. */
+const modoM3u = (env) => !!env.SOURCE_M3U;
+
+function hostDaFonte(env) {
+  if (!modoM3u(env)) return env.XTREAM_HOST;
+  try {
+    return new URL(env.SOURCE_M3U).host;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * No modo M3U o editor guarda o endereco de cada video em blobs de linhas
+ * "id<TAB>valor" (comecando com \n). Achamos a linha com indexOf, sem ler JSON,
+ * para caber no limite de CPU mesmo com milhares de itens.
+ */
+async function acharLinha(env, key, id) {
+  const blob = await env.IPTV.get(key, { cacheTtl: 300 });
+  if (!blob) return null;
+  const at = blob.indexOf(`\n${id}\t`);
+  if (at < 0) return null;
+  const start = at + String(id).length + 2;
+  return blob.slice(start, blob.indexOf('\n', start));
+}
+
+const PARTES_URL = 8;
+const PARTES_SERIE = 16;
+const TIPO_URL = { live: 'live', movie: 'vod', series: 'ep' };
+
+async function redirectM3u(env, kind, file) {
+  const id = Number(String(file).replace(/\..*$/, ''));
+  if (!Number.isInteger(id) || id <= 0) return text('Video nao encontrado', 404);
+  const alvo = await acharLinha(env, `pub:u:${TIPO_URL[kind]}:${id % PARTES_URL}`, id);
+  if (!alvo) return text('Video nao encontrado. Publique a lista de novo no editor.', 404);
+  return Response.redirect(alvo, 302);
+}
+
 function upstreamBase(env) {
   const scheme = env.XTREAM_SCHEME || 'https';
   return `${scheme}://${env.XTREAM_HOST}`;
@@ -143,6 +181,7 @@ const STREAM_ACTIONS = {
 
 /** Detalhes vem do provedor; so o nome recebe o seu override, se houver. */
 async function serveDetails(env, url, path, kind, idParam) {
+  if (modoM3u(env)) return detailsM3u(env, url, kind, idParam);
   const res = await passthrough(env, path, url);
   const id = url.searchParams.get(idParam);
   if (!id || !res.ok) return res;
@@ -164,6 +203,21 @@ async function serveDetails(env, url, path, kind, idParam) {
   } catch {
     return res;
   }
+}
+
+/** Lista M3U nao tem detalhes: a serie vem do que o editor publicou; o filme, do basico. */
+async function detailsM3u(env, url, kind, idParam) {
+  const id = Number(url.searchParams.get(idParam));
+  if (kind === 'series') {
+    const info = Number.isInteger(id) && id > 0 && (await acharLinha(env, `pub:si:${id % PARTES_SERIE}`, id));
+    if (!info) return json({ info: {}, seasons: [], episodes: {} });
+    return new Response(info, { headers: JSON_HEADERS });
+  }
+  const alvo = Number.isInteger(id) && id > 0 && (await acharLinha(env, `pub:u:vod:${id % PARTES_URL}`, id));
+  const ext = ((alvo || '').replace(/[?#].*$/, '').match(/\.([a-z0-9]{2,4})$/i) || [])[1] || 'mp4';
+  const names = await env.IPTV.get('pub:names:vod', { type: 'json', cacheTtl: 300 });
+  const name = (names && names[id]) || '';
+  return json({ info: { name }, movie_data: { stream_id: id, name, container_extension: ext } });
 }
 
 async function handlePlayerApi(env, url) {
@@ -190,6 +244,9 @@ async function handlePlayerApi(env, url) {
   if (action === 'get_vod_info') {
     return serveDetails(env, url, '/player_api.php', 'vod', 'vod_id');
   }
+
+  // Lista M3U nao tem guia por canal; o guia vem do xmltv (url-tvg da lista).
+  if (modoM3u(env)) return json(action === 'get_short_epg' || action === 'get_simple_data_table' ? { epg_listings: [] } : []);
 
   // get_short_epg, get_simple_data_table e o que mais o player pedir.
   return passthrough(env, '/player_api.php', url);
@@ -243,10 +300,11 @@ async function handleGetPhp(env, url) {
  * O player pede /live/SEU_USER/SUA_SENHA/123.ts e nos respondemos 302 para o
  * provedor com as credenciais reais. Nenhum video passa pelo Worker.
  */
-function redirectStream(env, kind, user, pass, file) {
+async function redirectStream(env, kind, user, pass, file) {
   if (!safeEqual(user, env.PLAYLIST_USER) || !safeEqual(pass, env.PLAYLIST_PASS)) {
     return text('Credenciais invalidas', 401);
   }
+  if (modoM3u(env)) return redirectM3u(env, kind, file);
   // O provedor repete o esquema no redirect para o no de video; alguns nos sao
   // IP puro e nao tem certificado, entao o video pode precisar de http.
   const scheme = env.STREAM_SCHEME || env.XTREAM_SCHEME || 'https';
@@ -286,12 +344,16 @@ async function handleAdminApi(env, request, url) {
       base: `${url.protocol}//${url.host}`,
       playlistUser: env.PLAYLIST_USER,
       playlistPass: env.PLAYLIST_PASS,
-      upstreamHost: env.XTREAM_HOST,
+      upstreamHost: hostDaFonte(env),
+      mode: modoM3u(env) ? 'm3u' : 'xtream',
       meta: meta || null,
     });
   }
 
   // Proxy do provedor: o navegador nao alcanca o servidor Xtream por causa do CORS.
+  if (path === '/upstream' && modoM3u(env)) {
+    return json({ ok: false, error: 'A fonte e uma lista M3U: o editor le pelo /upstream-m3u.' }, 409);
+  }
   if (path === '/upstream') {
     const action = url.searchParams.get('action') || '';
     const params = new URLSearchParams();
@@ -309,6 +371,13 @@ async function handleAdminApi(env, request, url) {
   }
 
   // M3U bruto do provedor, usado para reagrupar os episodios de serie.
+  if (path === '/upstream-m3u' && modoM3u(env)) {
+    const res = await fetch(env.SOURCE_M3U, { headers: { 'user-agent': UA } });
+    return new Response(res.ok ? res.body : null, {
+      status: res.status,
+      headers: { 'content-type': 'text/plain;charset=UTF-8', 'cache-control': 'no-store' },
+    });
+  }
   if (path === '/upstream-m3u') {
     const params = new URLSearchParams({ type: 'm3u_plus', output: 'mpegts' });
     const target = upstreamUrl(env, '/get.php', params);
@@ -373,7 +442,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (!env.XTREAM_HOST) {
+    if (!env.XTREAM_HOST && !env.SOURCE_M3U) {
       return text('Worker sem configuracao. Defina os secrets (veja o README).', 500);
     }
 
@@ -399,6 +468,11 @@ export default {
     }
     if (path === '/xmltv.php' || path === '/epg.php') {
       if (!playlistAuth(env, url)) return text('Credenciais invalidas', 401);
+      if (modoM3u(env)) {
+        const meta = await env.IPTV.get('pub:meta', { type: 'json', cacheTtl: 60 });
+        if (meta?.epgUrl) return Response.redirect(meta.epgUrl, 302);
+        return new Response('<?xml version="1.0" encoding="UTF-8"?><tv></tv>', { headers: { 'content-type': 'application/xml' } });
+      }
       return passthrough(env, '/xmltv.php', url);
     }
 
@@ -411,7 +485,7 @@ export default {
     if (m) return redirectStream(env, 'live', decodeURIComponent(m[1]), decodeURIComponent(m[2]), `${m[3]}.ts`);
 
     // Tokens opacos do provedor (/play/... e /hlsr/...) seguem direto.
-    if (/^\/(play|hlsr|timeshift|streaming)\//.test(path)) {
+    if (/^\/(play|hlsr|timeshift|streaming)\//.test(path) && !modoM3u(env)) {
       return Response.redirect(upstreamBase(env) + path + url.search, 302);
     }
 

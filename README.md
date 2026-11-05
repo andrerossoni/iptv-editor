@@ -275,6 +275,17 @@ provedor novo (ignorando acento, FHD/4K, ano e "Dublado"). No fim ele lista o
 que ficou sem par. O que só o provedor novo tem vai para **Sem pasta**.
 Confira e clique em **Publicar**.
 
+### Lista M3U sem usuário e senha
+
+O `trocar-provedor.command` também aceita o link de uma lista `.m3u`. O editor
+lê a lista sozinho: cada linha vira canal, filme ou episódio (os episódios
+`S01E01` viram uma série), e cada item ganha um número fixo tirado do endereço
+do vídeo. O seu link continua respondendo no modo Xtream e no M3U.
+
+- Se a lista só abre no seu navegador, baixe o arquivo e use
+  **Abrir arquivo .m3u** no editor.
+- Lista M3U não traz sinopse nem elenco; o guia vem do `url-tvg` da lista.
+
 ---
 
 ## Segurança
