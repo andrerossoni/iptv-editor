@@ -258,6 +258,7 @@ const Focus = {
     switch (code) {
       case TV_KEYS.back:
         stop();
+        if (Player.backOverlay()) break;
         if (ui.side.classList.contains('open')) ui.side.classList.remove('open');
         else Player.close();
         break;

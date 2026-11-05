@@ -296,6 +296,12 @@ const App = {
 
   /* --------------------------------------------------------------- tocar */
 
+  /** O que a busca de legendas precisa saber do filme ou episodio. */
+  subsFor(item, info, ep) {
+    const base = { kind: item.kind === 'series' ? 'series' : 'movie', tmdb: info?.tmdb || item.tmdb || '', name: item.name, year: +item.year || 0 };
+    return ep ? { ...base, key: ep.key, season: ep.season, episode: ep.num } : { ...base, key: item.key };
+  },
+
   playMovie(item, info, fromStart) {
     const p = Watch.get(item.key);
     const startAt = !fromStart && p && p.pos / p.dur < 0.92 ? p.pos : 0;
@@ -307,6 +313,7 @@ const App = {
       url: Data.streamUrl('movie', item.id, info?.ext || item.ext),
       key: item.key,
       startAt,
+      subs: this.subsFor(item, info),
       onClose: () => this.refresh(),
     });
   },
@@ -324,6 +331,7 @@ const App = {
       url: Data.streamUrl('episode', ep.id, ep.ext),
       key: ep.key,
       startAt,
+      subs: this.subsFor(series, info, ep),
       next: next && { label: `T${next.season}:E${next.num} · ${next.title}`, play: () => this.playEpisode(series, info, next, true) },
       // Terminou o episodio: o "continuar assistindo" passa a apontar o proximo.
       onProgress: (pct) => {
@@ -656,6 +664,9 @@ const App = {
     Data.details(item)
       .then((info) => {
         if (!isLive()) return;
+        // Legendas: a busca ja comeca aqui, para estarem prontas quando o filme abrir.
+        if (item.kind === 'movie') Subs.find(this.subsFor(item, info));
+        else Subs.imdb('series', info.tmdb || item.tmdb);
         if (info.backdrop && info.backdrop !== item.backdrop) setBg(info.backdrop, false);
         this.fillDetail(item, info, body, extra, isLive);
       })

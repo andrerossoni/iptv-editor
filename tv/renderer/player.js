@@ -39,7 +39,15 @@ const Player = {
       spinner: q('.p-spinner'),
       vol: q('.p-vol'),
       seekRow: q('.p-seekrow'),
+      scrub: q('.p-scrub'),
+      thumb: q('.p-thumb'),
+      scrubTime: q('.p-scrub-time'),
+      cc: q('.p-cc'),
+      ccMenu: q('.p-ccmenu'),
+      subs: q('.p-subs'),
     };
+    this.ui.cc.innerHTML = ICON.cc;
+    this.ui.cc.onclick = () => (this.ccOpen ? this.closeCcMenu() : this.openCcMenu());
 
     q('.p-back').onclick = () => this.close();
     this.ui.play.onclick = () => this.toggle();
@@ -90,7 +98,12 @@ const Player = {
       this.ui.hover.textContent = fmtTime(ratio * (v.duration || 0));
     });
     this.ui.bar.addEventListener('click', (e) => {
-      if (isFinite(v.duration)) v.currentTime = ratioAt(e) * v.duration;
+      if (!isFinite(v.duration)) return;
+      if (this.scrub) {
+        this.scrub.target = ratioAt(e) * v.duration;
+        return this.commitScrub();
+      }
+      v.currentTime = ratioAt(e) * v.duration;
     });
 
     this.el.addEventListener('mousemove', () => this.poke());
@@ -137,6 +150,7 @@ const Player = {
     this.ui.nextCard.classList.remove('on');
     this.ui.next.hidden = !opts.next;
     this.ui.channels.hidden = !opts.channels;
+    this.setupSubs(opts);
     this.ui.spinner.classList.add('on');
     this.ui.fill.style.width = '0';
     this.ui.buf.style.width = '0';
@@ -192,6 +206,8 @@ const Player = {
   },
 
   stop() {
+    if (this.scrub) this.endScrub();
+    this.closeCcMenu();
     this.saveNow();
     clearInterval(this.epgTimer);
     clearInterval(this.nextTimer);
@@ -215,17 +231,279 @@ const Player = {
   },
 
   toggle() {
+    if (this.scrub) return this.commitScrub();
     const v = this.video;
     if (v.paused) v.play().catch(() => {});
     else v.pause();
     this.poke();
   },
 
+  /* ------------------------------------------- linha do tempo (pino) */
+
+  /**
+   * Como nos apps de streaming: cada clique so anda o pino na linha do tempo,
+   * com o video pausado e uma miniatura da cena daquele ponto. O video so vai
+   * para la no OK (ou no play); Voltar desiste e continua de onde estava.
+   */
+  scrub: null,
+  preview: null,
+
   seekBy(sec) {
     const v = this.video;
     if (this.session?.kind === 'live' || !isFinite(v.duration)) return;
-    v.currentTime = Math.min(v.duration - 1, Math.max(0, v.currentTime + sec));
+    const now = Date.now();
+    let s = this.scrub;
+    if (!s) {
+      s = this.scrub = { target: v.currentTime, from: v.currentTime, wasPlaying: !v.paused, n: 0, last: 0, dir: 0 };
+      v.pause();
+      this.el.classList.add('scrubbing');
+    }
+    const dir = Math.sign(sec);
+    s.n = dir === s.dir && now - s.last < 900 ? s.n + 1 : 0;
+    s.dir = dir;
+    s.last = now;
+    // Clicando seguido (ou segurando), o pino anda cada vez mais rapido.
+    const mult = s.n < 4 ? 1 : s.n < 10 ? 2 : s.n < 20 ? 4 : 8;
+    s.target = Math.min(v.duration - 1, Math.max(0, s.target + sec * mult));
+    this.renderScrub();
     this.poke();
+  },
+
+  renderScrub() {
+    const s = this.scrub;
+    const v = this.video;
+    if (!s) return;
+    const pct = s.target / v.duration;
+    this.ui.fill.style.width = `${pct * 100}%`;
+    this.ui.time.textContent = `${fmtTime(s.target)}  /  ${fmtTime(v.duration)}`;
+    const diff = s.target - s.from;
+    this.ui.scrubTime.textContent = `${fmtTime(s.target)}   ${diff >= 0 ? '+' : '−'}${fmtTime(Math.abs(diff))}`;
+    // A miniatura acompanha o pino sem sair da tela nas pontas.
+    const w = this.ui.bar.clientWidth;
+    const half = this.ui.scrub.offsetWidth / 2;
+    this.ui.scrub.style.left = `${Math.min(w - half, Math.max(half, pct * w))}px`;
+    clearTimeout(this.thumbTimer);
+    this.thumbTimer = setTimeout(() => this.showThumb(s), 200);
+  },
+
+  /**
+   * A miniatura e um segundo video, so com a imagem, parado no ponto do pino.
+   * Ele so existe enquanto o pino anda (usa a segunda conexao da lista).
+   */
+  showThumb(s) {
+    if (this.scrub !== s || !this.session) return;
+    let pv = this.preview;
+    if (!pv) {
+      pv = this.preview = h('video', { class: 'p-thumbv', preload: 'auto', playsinline: true });
+      pv.muted = true;
+      pv.addEventListener('seeked', () => {
+        if (this.preview !== pv || !this.scrub) return;
+        // A previa nao conseguiu ir ao ponto (servidor sem pulo): melhor sem miniatura do que com a cena errada.
+        if (Math.abs(pv.currentTime - this.scrub.target) > 20) return this.ui.thumb.classList.add('off');
+        this.ui.thumb.classList.add('ready');
+      });
+      pv.addEventListener('error', () => this.preview === pv && this.ui.thumb.classList.add('off'));
+      this.ui.thumb.append(pv);
+      pv.src = this.session.url;
+    }
+    this.ui.thumb.classList.remove('ready');
+    const go = () => {
+      if (this.scrub !== s || this.preview !== pv) return;
+      const end = pv.seekable.length ? pv.seekable.end(pv.seekable.length - 1) : 0;
+      if (end < s.target) return this.ui.thumb.classList.add('off');
+      pv.currentTime = s.target;
+    };
+    if (pv.readyState >= 1) go();
+    else pv.addEventListener('loadedmetadata', go, { once: true });
+  },
+
+  releasePreview() {
+    const pv = this.preview;
+    this.preview = null;
+    this.ui.thumb.classList.remove('ready', 'off');
+    if (!pv) return;
+    pv.removeAttribute('src');
+    pv.load();
+    pv.remove();
+  },
+
+  endScrub() {
+    clearTimeout(this.thumbTimer);
+    this.scrub = null;
+    this.el.classList.remove('scrubbing');
+    this.releasePreview();
+  },
+
+  /** OK: o video vai para o ponto do pino e volta a tocar. */
+  commitScrub() {
+    const s = this.scrub;
+    if (!s) return;
+    this.endScrub();
+    this.video.currentTime = s.target;
+    this.video.play().catch(() => {});
+    this.onTime();
+    this.poke();
+  },
+
+  /** Voltar: desiste e continua de onde estava. */
+  cancelScrub() {
+    const s = this.scrub;
+    if (!s) return;
+    this.endScrub();
+    this.onTime();
+    if (s.wasPlaying) this.video.play().catch(() => {});
+    this.poke();
+  },
+
+  /** Voltar/Esc: fecha o que estiver aberto por cima do video. Diz se fechou algo. */
+  backOverlay() {
+    if (this.scrub) return this.cancelScrub(), true;
+    if (this.ccOpen) return this.closeCcMenu(), true;
+    if (this.ccFocus) return this.setCcFocus(false), true;
+    return false;
+  },
+
+  /* ------------------------------------------------------------ legendas */
+
+  subList: null,
+  subCur: null,
+  cues: null,
+  ccOpen: false,
+  ccFocus: false,
+
+  setupSubs(opts) {
+    this.subList = null;
+    this.subCur = null;
+    this.cues = null;
+    this.lastCue = null;
+    this.ui.subs.textContent = '';
+    this.setCcFocus(false);
+    const can = opts.kind !== 'live' && !!opts.subs;
+    this.ui.cc.hidden = !can;
+    this.ui.cc.classList.remove('on');
+    if (!can) return;
+    Subs.find(opts.subs).then((list) => {
+      if (this.session !== opts) return;
+      this.subList = list;
+      if (this.ccOpen) this.renderCcMenu();
+      // Ja tinha escolhido um idioma antes: entra nele sozinho.
+      const pick = Subs.pref && list.find((x) => x.lang === Subs.pref);
+      if (pick && !this.subCur) this.chooseSub(pick, true);
+    });
+  },
+
+  async chooseSub(sub, auto) {
+    this.subCur = sub;
+    this.cues = null;
+    this.lastCue = null;
+    this.ui.subs.textContent = '';
+    this.ui.cc.classList.toggle('on', !!sub);
+    if (this.ccOpen) this.renderCcMenu();
+    if (!auto) {
+      Subs.pref = sub ? sub.lang : '';
+      store.set('subs-lang', Subs.pref);
+    }
+    if (!sub) return;
+    try {
+      const cues = await Subs.load(sub);
+      if (this.subCur !== sub) return;
+      this.cues = cues;
+      this.renderSubs();
+      if (!auto) toast(`Legenda: ${sub.langLabel}`);
+    } catch {
+      if (this.subCur !== sub) return;
+      toast('Não consegui baixar essa legenda. Tente outra opção.');
+      this.subCur = null;
+      this.ui.cc.classList.remove('on');
+    }
+  },
+
+  renderSubs() {
+    if (!this.cues) return;
+    const cue = Subs.at(this.cues, this.video.currentTime);
+    if (cue === this.lastCue) return;
+    this.lastCue = cue;
+    this.ui.subs.replaceChildren(...(cue ? [h('span', {}, cue.text)] : []));
+  },
+
+  openCcMenu() {
+    if (this.ui.cc.hidden) return;
+    this.ccOpen = true;
+    this.ccSel = null;
+    this.renderCcMenu();
+    this.ui.ccMenu.classList.add('on');
+    this.poke();
+  },
+
+  closeCcMenu() {
+    this.ccOpen = false;
+    this.ui.ccMenu?.classList.remove('on');
+  },
+
+  renderCcMenu() {
+    const list = this.subList;
+    const rows = [{ sub: null, title: 'Desligada' }];
+    for (const sub of list || []) {
+      const n = list.filter((x) => x.lang === sub.lang).indexOf(sub) + 1;
+      rows.push({ sub, title: `${sub.langLabel}${n > 1 ? ` · opção ${n}` : ''}${sub.hi ? ' · para surdos' : ''}`, detail: sub.release });
+    }
+    const items = rows.map((r) =>
+      h(
+        'button',
+        { class: `p-cc-item${r.sub === this.subCur ? ' cur' : ''}`, onclick: () => (this.chooseSub(r.sub), this.closeCcMenu()) },
+        h('span', { class: 'p-cc-check' }, r.sub === this.subCur ? '✓' : ''),
+        h('span', { class: 'p-cc-text' }, h('b', {}, r.title), r.detail ? h('small', {}, r.detail) : null)
+      )
+    );
+    const status = !list ? 'Procurando legendas…' : list.length ? '' : 'Nenhuma legenda em português ou inglês para este título.';
+    this.ui.ccMenu.replaceChildren(h('div', { class: 'p-cc-head' }, 'Legendas'), ...items, ...(status ? [h('div', { class: 'p-cc-status' }, status)] : []));
+    if (this.ccSel == null) this.ccSel = Math.max(0, rows.findIndex((r) => r.sub === this.subCur));
+    this.moveCc(0);
+  },
+
+  moveCc(d) {
+    const items = [...this.ui.ccMenu.querySelectorAll('.p-cc-item')];
+    if (!items.length) return;
+    this.ccSel = Math.max(0, Math.min(items.length - 1, (this.ccSel || 0) + d));
+    items.forEach((el, i) => el.classList.toggle('sel', i === this.ccSel));
+    items[this.ccSel].scrollIntoView({ block: 'nearest' });
+  },
+
+  /** No controle da TV: seta para baixo leva ao botao de legenda. */
+  setCcFocus(on) {
+    this.ccFocus = on;
+    this.ui.cc?.classList.toggle('tv-focus', on);
+    if (on) this.poke();
+  },
+
+  /** Teclas do controle com legenda/pino em jogo. Devolve true se usou a tecla. */
+  tvKey(key) {
+    if (this.ccOpen) {
+      if (key === 'up' || key === 'down') this.moveCc(key === 'up' ? -1 : 1);
+      else if (key === 'ok') this.ui.ccMenu.querySelectorAll('.p-cc-item')[this.ccSel]?.click();
+      this.poke();
+      return true;
+    }
+    if (this.scrub) {
+      if (key === 'ok') this.commitScrub();
+      else if (key === 'left' || key === 'right') return false;
+      return true;
+    }
+    if (this.ccFocus) {
+      if (key === 'ok') this.openCcMenu();
+      else if (key === 'up') this.setCcFocus(false);
+      else if (key === 'left' || key === 'right') {
+        this.setCcFocus(false);
+        return false;
+      }
+      this.poke();
+      return true;
+    }
+    if (key === 'down' && this.session?.kind !== 'live' && !this.ui.cc.hidden) {
+      this.setCcFocus(true);
+      return true;
+    }
+    return false;
   },
 
   syncPlay() {
@@ -241,12 +519,15 @@ const Player = {
     this.el.classList.add('ui-on');
     clearTimeout(this.hideTimer);
     this.hideTimer = setTimeout(() => {
-      if (!this.video.paused && !this.ui.side.classList.contains('open')) this.el.classList.remove('ui-on');
+      if (!this.video.paused && !this.ui.side.classList.contains('open') && !this.ccOpen && !this.ccFocus) this.el.classList.remove('ui-on');
     }, 3200);
   },
 
   onTime() {
     const v = this.video;
+    this.renderSubs();
+    // Pino andando: a barra mostra o ponto escolhido, nao o do video.
+    if (this.scrub) return;
     // No ao vivo o HLS informa a duracao da janela de segmentos, nao do programa.
     if (this.session?.kind === 'live' || !isFinite(v.duration) || !v.duration) {
       this.ui.time.textContent = this.session?.kind === 'live' ? 'AO VIVO' : fmtTime(v.currentTime);
@@ -394,7 +675,17 @@ const Player = {
 
   onKey(e) {
     const v = this.video;
+    const tvMap = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'ok' };
+    // TV: a seta para baixo vai ao botao de legenda. Menu de legenda e pino respondem antes de tudo.
+    if ((document.body.classList.contains('tv') || this.ccOpen || this.scrub) && tvMap[e.key] && this.tvKey(tvMap[e.key])) {
+      e.preventDefault();
+      this.poke();
+      return;
+    }
     switch (e.key) {
+      case 'c':
+        this.ui.cc.click();
+        break;
       case ' ':
       case 'k':
       case 'Enter':
@@ -429,6 +720,7 @@ const Player = {
         break;
       case 'Escape':
       case 'Backspace':
+        if (this.backOverlay()) break;
         if (this.ui.side.classList.contains('open')) this.ui.side.classList.remove('open');
         else this.close();
         break;

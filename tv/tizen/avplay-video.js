@@ -94,12 +94,18 @@
     }
   };
 
-  const seek = (sec) => {
+  // O AVPlay recusa milissegundos quebrados (PLAYER_ERROR_SEEK_FAILED). Se
+  // falhar mesmo assim (conexao anterior ainda fechando), tenta de novo.
+  const seek = (sec, tries = 0) => {
     pendingSeek = null;
+    const mine = session;
+    const retry = () => tries < 4 && setTimeout(() => mine === session && seek(sec, tries + 1), 1200);
     try {
-      av.seekTo(Math.max(0, sec) * 1000, () => emit('timeupdate'), () => {});
+      av.seekTo(Math.round(Math.max(0, sec) * 1000), () => emit('timeupdate'), retry);
       now = sec;
-    } catch {}
+    } catch {
+      retry();
+    }
   };
 
   const play = () => {

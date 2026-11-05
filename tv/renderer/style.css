@@ -1375,3 +1375,182 @@ html::-webkit-scrollbar {
   text-shadow: 0 4px 18px rgba(0, 0, 0, 0.7);
   pointer-events: none;
 }
+
+/* ---------------------------------------- pino na linha do tempo */
+
+.p-scrub {
+  position: absolute;
+  bottom: 2.4rem;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+#player.scrubbing .p-scrub {
+  display: flex;
+}
+
+#player.scrubbing .p-hover,
+#player.scrubbing .p-bigplay {
+  display: none;
+}
+
+#player.scrubbing .p-fill::after {
+  transform: scale(1.35);
+  background: #fff;
+}
+
+.p-thumb {
+  position: relative;
+  width: 24rem;
+  aspect-ratio: 16 / 9;
+  border-radius: 0.6rem;
+  overflow: hidden;
+  background: #111;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.6);
+}
+
+.p-thumb.off {
+  display: none;
+}
+
+.p-thumbv {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.3;
+  transition: opacity 0.15s;
+}
+
+.p-thumb.ready .p-thumbv {
+  opacity: 1;
+}
+
+.p-scrub-time {
+  font-size: 1.5rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+.p-scrub-hint {
+  font-size: 1rem;
+  opacity: 0.8;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+/* ------------------------------------------------------- legendas */
+
+.p-subs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 7%;
+  padding: 0 10%;
+  text-align: center;
+  pointer-events: none;
+  transition: bottom 0.3s;
+}
+
+#player.ui-on .p-subs {
+  bottom: 15rem;
+}
+
+.p-subs span {
+  display: inline-block;
+  white-space: pre-line;
+  font-size: clamp(1.5rem, 2.6vw, 3.2rem);
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 0.12em 0.5em;
+  border-radius: 0.3em;
+  background: rgba(0, 0, 0, 0.55);
+  text-shadow: 0 0 4px #000, 0 0 2px #000;
+}
+
+.p-cc.on {
+  color: var(--accent);
+}
+
+.p-ccmenu {
+  position: absolute;
+  right: var(--gutter);
+  bottom: 9rem;
+  width: min(34rem, 80vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.6rem;
+  border-radius: 0.9rem;
+  background: rgba(18, 18, 22, 0.96);
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+  display: none;
+}
+
+.p-ccmenu.on {
+  display: block;
+}
+
+.p-cc-head {
+  padding: 0.6rem 0.9rem 0.8rem;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.p-cc-item {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.6rem;
+  text-align: left;
+  color: inherit;
+  background: none;
+}
+
+.p-cc-item:hover,
+.p-cc-item.sel {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+body.tv .p-cc-item.sel {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.p-cc-check {
+  width: 1.2rem;
+  font-weight: 800;
+}
+
+.p-cc-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.p-cc-text b {
+  font-size: 1.1rem;
+}
+
+.p-cc-text small {
+  font-size: 0.85rem;
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p-cc-status {
+  padding: 0.7rem 0.9rem;
+  opacity: 0.7;
+}
+
+#player.scrubbing .p-subs {
+  visibility: hidden;
+}

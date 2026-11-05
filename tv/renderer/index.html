@@ -32,6 +32,7 @@
     <div id="player" hidden>
       <video id="video" playsinline></video>
       <div class="p-spinner"><div class="spinner"></div></div>
+      <div class="p-subs"></div>
 
       <div class="p-ui">
         <div class="p-top">
@@ -52,6 +53,11 @@
             <div class="p-buf"></div>
             <div class="p-fill"></div>
             <div class="p-hover"></div>
+            <div class="p-scrub">
+              <div class="p-thumb"></div>
+              <div class="p-scrub-time"></div>
+              <div class="p-scrub-hint">OK para assistir daqui</div>
+            </div>
           </div>
           <div class="p-row">
             <button class="p-btn p-rw" aria-label="Voltar 10 segundos"></button>
@@ -61,6 +67,7 @@
             <div class="spacer"></div>
             <button class="p-btn wide p-nextbtn"><span class="ico"></span><span>Próximo episódio</span></button>
             <button class="p-btn wide p-chbtn"><span class="ico"></span><span>Canais</span></button>
+            <button class="p-btn p-cc" aria-label="Legendas"></button>
             <div class="p-volbox">
               <button class="p-btn p-vol" aria-label="Som"></button>
               <input class="p-volrange" type="range" min="0" max="100" step="1" value="100" aria-label="Volume" />
@@ -71,6 +78,7 @@
       </div>
 
       <div class="p-side"></div>
+      <div class="p-ccmenu"></div>
 
       <div class="p-nextcard">
         <div class="p-nc-label">Próximo episódio em <b class="p-nc-count">10</b></div>
@@ -107,6 +115,7 @@
     </script>
     <script src="data.js"></script>
     <script src="trends.js"></script>
+    <script src="subs.js"></script>
     <script src="player.js"></script>
     <script src="channels.js"></script>
     <script src="app.js"></script>

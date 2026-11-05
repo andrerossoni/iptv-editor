@@ -5,7 +5,7 @@
  * configuracao e o catalogo em disco, e falar com o TMDB (com cache), para a
  * chave nunca ficar exposta na pagina.
  */
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -146,5 +146,29 @@ ipcMain.handle('window:fullscreen', (e) => {
 });
 ipcMain.handle('app:quit', () => app.quit());
 
-app.whenReady().then(createWindow);
+/**
+ * O servidor dos filmes atende "a partir do byte N", mas no primeiro pedido
+ * (do byte 0) responde 200 com um Accept-Ranges invalido. O Chromium entende
+ * que o arquivo nao deixa pular e cada pulo recomeca o video do inicio.
+ * Aqui a resposta e corrigida para o que ela de fato e: um 206 com intervalos.
+ */
+function fixRanges() {
+  session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+    const h = details.responseHeaders || {};
+    const name = (n) => Object.keys(h).find((k) => k.toLowerCase() === n);
+    const range = name('content-range');
+    if (details.resourceType === 'media' && details.statusCode === 200 && range && /^bytes \d+-\d+\/\d+/.test(h[range][0])) {
+      const accept = name('accept-ranges');
+      if (accept) delete h[accept];
+      h['Accept-Ranges'] = ['bytes'];
+      return cb({ responseHeaders: h, statusLine: 'HTTP/1.1 206 Partial Content' });
+    }
+    cb({});
+  });
+}
+
+app.whenReady().then(() => {
+  fixRanges();
+  createWindow();
+});
 app.on('window-all-closed', () => app.quit());
