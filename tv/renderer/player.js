@@ -365,13 +365,25 @@ const Player = {
       if (this.scrub !== s || Math.round(s.target) !== sec) return;
       let at = null;
       try {
-        const res = await fetch(`${base}/thumb/${r.kind}/${r.id}/${sec}.jpg`);
+        // A TV nao mostrava a foto vinda de blob: pergunta qual e a mais proxima e carrega pelo endereco.
+        const res = await fetch(`${base}/near/${r.kind}/${r.id}/${sec}`);
         if (res.ok) {
-          at = +res.headers.get('x-thumb-at');
-          const url = URL.createObjectURL(await res.blob());
-          if (this.scrub !== s) return URL.revokeObjectURL(url);
-          if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-          img.src = url;
+          at = (await res.json()).at;
+          const url = `${base}/frame/${r.kind}/${r.id}/${at}.jpg`;
+          if (this.scrub !== s) return;
+          if (img.dataset.at !== String(at)) {
+            const loaded = await new Promise((done) => {
+              const pre = new Image();
+              pre.onload = () => done(pre.naturalWidth > 0);
+              pre.onerror = () => done(false);
+              pre.src = url;
+            });
+            if (this.scrub !== s) return;
+            // Foto que nao abriu nao vai para a tela (nada de icone quebrado).
+            if (!loaded) throw new Error('foto nao abriu');
+            img.src = url;
+            img.dataset.at = at;
+          }
           this.ui.thumb.classList.add('ready');
           if (Math.abs(at - sec) <= 6) this.ui.thumb.classList.remove('stale');
         }

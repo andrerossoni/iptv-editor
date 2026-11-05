@@ -7,7 +7,9 @@
  * linha do tempo estiver), e serve as fotos para a TV pela rede de casa.
  *
  *   GET /watch?kind=movie|series&id=&ext=&at=&dur=[&hold=s]  liga/atualiza
- *   GET /thumb/<kind>/<id>/<seg>.jpg   foto mais proxima (ate 30 s); 404 se nao houver
+ *   GET /near/<kind>/<id>/<seg>        qual foto e a mais proxima (ate 30 s); 404 se nao houver
+ *   GET /frame/<kind>/<id>/<seg>.jpg   a foto em si
+ *   GET /thumb/<kind>/<id>/<seg>.jpg   foto mais proxima direto
  *   GET /stop?kind=&id=                para de gerar
  *   GET /src/<kind>/<id>.<ext>         video para o ffmpeg (so do proprio Mac)
  *
@@ -63,43 +65,61 @@ async function upstream(kind, id, ext, start) {
 }
 
 /**
- * O comeco do arquivo (onde fica o indice do MP4) e o mesmo em toda foto:
- * fica guardado na memoria, e cada foto faz um pedido so ao provedor.
+ * O indice do MP4 fica no comeco ou no fim do arquivo, e o ffmpeg le esse
+ * indice em toda foto. Os dois pedacos ficam guardados na memoria: cada foto
+ * vai ao provedor uma vez so (o trecho da cena).
  */
 const HEAD = 12 * 1024 * 1024;
-const heads = new Map();
+const TAIL = 48 * 1024 * 1024;
+const files = new Map();
 
-function head(kind, id, ext) {
-  const k = `${kind}/${id}`;
-  if (!heads.has(k)) {
-    const p = (async () => {
-      const up = await upstream(kind, id, ext, 0);
-      const total = +(up.headers.get('content-range')?.split('/')[1] || up.headers.get('content-length'));
-      const parts = [];
-      let got = 0;
-      for await (const chunk of up.body) {
-        parts.push(chunk);
-        got += chunk.length;
-        if (got >= HEAD) break;
-      }
-      return { buf: Buffer.concat(parts).subarray(0, HEAD), total };
-    })();
-    p.catch(() => heads.delete(k));
-    heads.set(k, p);
-    // So os filmes em andamento ficam na memoria.
-    while (heads.size > 3) heads.delete(heads.keys().next().value);
+async function download(kind, id, ext, start, max) {
+  const up = await upstream(kind, id, ext, start);
+  const total = +(up.headers.get('content-range')?.split('/')[1] || up.headers.get('content-length'));
+  const parts = [];
+  let got = 0;
+  for await (const chunk of up.body) {
+    parts.push(chunk);
+    got += chunk.length;
+    if (got >= max) break;
   }
-  return heads.get(k);
+  return { start, buf: Buffer.concat(parts).subarray(0, max), total };
+}
+
+function file(kind, id, ext) {
+  const k = `${kind}/${id}`;
+  if (!files.has(k)) {
+    const f = { segs: [], head: download(kind, id, ext, 0, HEAD) };
+    f.head.then((seg) => ((f.total = seg.total), f.segs.push(seg))).catch(() => files.delete(k));
+    files.set(k, f);
+    // So os filmes em andamento ficam na memoria.
+    while (files.size > 3) files.delete(files.keys().next().value);
+  }
+  return files.get(k);
 }
 
 async function source(req, res, kind, id, ext) {
   const start = +(/bytes=(\d+)-/.exec(req.headers.range || '')?.[1] || 0);
-  const { buf, total } = await head(kind, id, ext);
+  const f = file(kind, id, ext);
+  await f.head;
+  const total = f.total;
+  let seg = f.segs.find((x) => start >= x.start && start < x.start + x.buf.length);
+  // Pedido perto do fim (indice no fim do arquivo): baixa o fim inteiro uma vez.
+  if (!seg && total - start <= TAIL) {
+    f.tail ||= download(kind, id, ext, start, TAIL).then((x) => (f.segs.push(x), x));
+    try {
+      const t = await f.tail;
+      if (start >= t.start) seg = t;
+    } catch {
+      f.tail = null;
+    }
+  }
   res.writeHead(206, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${total - 1}/${total}`, 'content-length': total - start });
   let from = start;
-  if (start < buf.length) {
-    const ok = res.write(buf.subarray(start));
-    from = buf.length;
+  if (seg) {
+    const ok = res.write(seg.buf.subarray(start - seg.start));
+    from = seg.start + seg.buf.length;
+    if (from >= total) return res.end();
     if (!ok) await new Promise((r) => (res.once('drain', r), res.once('close', r)));
     if (res.destroyed) return;
   }
@@ -211,7 +231,15 @@ http
         if (+q.hold > 0) j.hold = Date.now() + +q.hold * 1000;
         return res.end(JSON.stringify({ step: STEP, have: j.done.size }));
       }
-      if ((m = u.pathname.match(/^\/thumb\/(movie|series)\/(\d+)\/(\d+)\.jpg$/))) {
+      // Foto pelo endereco direto (a TV mostra num <img>): /frame/<kind>/<id>/<seg>.jpg
+      if ((m = u.pathname.match(/^\/frame\/(movie|series)\/(\d+)\/(\d+)\.jpg$/))) {
+        const fp = path.join(dirOf(m[1], m[2]), `${+m[3]}.jpg`);
+        if (!fs.existsSync(fp)) return res.writeHead(404).end();
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=604800' });
+        return fs.createReadStream(fp).pipe(res);
+      }
+      if ((m = u.pathname.match(/^\/(thumb|near)\/(movie|series)\/(\d+)\/(\d+)(\.jpg)?$/))) {
+        m = [m[0], m[2], m[3], m[4], m[1]];
         const sec = +m[3];
         const j = jobs.get(`${m[1]}/${m[2]}`);
         if (j) {
@@ -222,6 +250,8 @@ http
         let best = null;
         for (const s of done) if (Math.abs(s - sec) <= 30 && (best == null || Math.abs(s - sec) < Math.abs(best - sec))) best = s;
         if (best == null) return res.writeHead(404).end();
+        // /near: so diz qual foto e a mais proxima (a TV carrega pelo /frame).
+        if (m[4] === 'near') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ at: best }));
         res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=86400', 'x-thumb-at': String(best), 'access-control-expose-headers': 'x-thumb-at' });
         return fs.createReadStream(path.join(dirOf(m[1], m[2]), `${best}.jpg`)).pipe(res);
       }
