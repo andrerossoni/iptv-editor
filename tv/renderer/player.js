@@ -292,6 +292,9 @@ const Player = {
    */
   showThumb(s) {
     if (this.scrub !== s || !this.session) return;
+    // Na TV o segundo video disputa a unica camada de video com o AVPlay:
+    // o filme fica preto e a miniatura sai da moldura. La fica so o horario.
+    if (window.TvVideo) return this.ui.thumb.classList.add('off');
     let pv = this.preview;
     if (!pv) {
       pv = this.preview = h('video', { class: 'p-thumbv', preload: 'auto', playsinline: true });

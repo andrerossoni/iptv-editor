@@ -423,3 +423,8 @@ body.tv #player.is-live .p-back {
 body.tv .p-volrange {
   display: none;
 }
+
+/* Sem miniatura na TV: o segundo video apagaria o filme (ver player.js). */
+body.tv .p-thumb {
+  display: none;
+}
