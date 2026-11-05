@@ -349,6 +349,10 @@ const Watch = {
   progress: store.get('progress', {}),
   history: store.get('history', []),
   mylist: store.get('mylist', []),
+  /** Quando cada titulo entrou ou saiu da lista: o Sync junta TV e Mac por aqui. */
+  list: store.get('mylist-t', null) || Object.fromEntries(store.get('mylist', []).map((k, i) => [k, { on: true, t: Date.now() - i }])),
+  gone: store.get('history-gone', {}),
+  cleared: store.get('history-cleared', 0),
 
   get(key) {
     return this.progress[key];
@@ -363,6 +367,7 @@ const Watch = {
     if (!dur || !isFinite(dur)) return;
     this.progress[key] = { pos, dur, t: Date.now() };
     store.set('progress', this.progress);
+    Sync.soon();
   },
 
   /** Registra o titulo no historico; para serie guarda tambem o episodio. */
@@ -370,11 +375,26 @@ const Watch = {
     const prev = this.history.find((x) => x.key === item.key) || {};
     this.history = [{ ...prev, key: item.key, t: Date.now(), ...extra }, ...this.history.filter((x) => x.key !== item.key)].slice(0, 200);
     store.set('history', this.history);
+    Sync.soon();
   },
 
   forget(key) {
     this.history = this.history.filter((x) => x.key !== key);
+    this.gone[key] = Date.now();
     store.set('history', this.history);
+    store.set('history-gone', this.gone);
+    Sync.soon();
+  },
+
+  /** Apaga historico e progresso (vale para a TV e o Mac). */
+  clearAll() {
+    this.history = [];
+    this.progress = {};
+    this.cleared = Date.now();
+    store.set('history', []);
+    store.set('progress', {});
+    store.set('history-cleared', this.cleared);
+    Sync.soon();
   },
 
   inList(key) {
@@ -382,9 +402,45 @@ const Watch = {
   },
 
   toggleList(key) {
-    this.mylist = this.inList(key) ? this.mylist.filter((k) => k !== key) : [key, ...this.mylist];
-    store.set('mylist', this.mylist);
+    this.list[key] = { on: !this.inList(key), t: Date.now() };
+    this.saveList();
+    Sync.soon();
     return this.inList(key);
+  },
+
+  saveList() {
+    this.mylist = Object.entries(this.list)
+      .filter(([, v]) => v.on)
+      .sort((a, b) => b[1].t - a[1].t)
+      .map(([k]) => k);
+    store.set('mylist', this.mylist);
+    store.set('mylist-t', this.list);
+  },
+
+  /** O que vai para o ajudante no Mac. */
+  snapshot() {
+    return { progress: this.progress, history: this.history, list: this.list, gone: this.gone, cleared: this.cleared };
+  },
+
+  /** O que aparece nas fileiras (progresso sozinho nao conta). */
+  shape() {
+    return `${this.mylist.join()}|${this.history.map((h) => `${h.key}:${h.ep?.key || ''}`).join()}`;
+  },
+
+  /** Recebe o resultado juntado; diz se a lista ou o historico mudaram. */
+  apply(st) {
+    const before = this.shape();
+    this.progress = st.progress || {};
+    this.history = st.history || [];
+    this.list = st.list || {};
+    this.gone = st.gone || {};
+    this.cleared = st.cleared || 0;
+    store.set('progress', this.progress);
+    store.set('history', this.history);
+    store.set('history-gone', this.gone);
+    store.set('history-cleared', this.cleared);
+    this.saveList();
+    return this.shape() !== before;
   },
 
   /** "Continuar assistindo": filmes pela metade e series com episodio em andamento ou o proximo. */
@@ -403,6 +459,67 @@ const Watch = {
       if (out.length >= 30) break;
     }
     return out;
+  },
+};
+
+/* ------------------------------------------------- TV e Mac iguais */
+
+/**
+ * "Minha Lista", historico e progresso ficam iguais na TV e no Mac: os dois
+ * mandam o que tem para o ajudante que roda no Mac (tv/helper), que junta
+ * item a item e devolve o resultado. Sem o ajudante, cada um segue sozinho e
+ * junta quando ele voltar.
+ *
+ * Na primeira vez o Mac so recebe (a lista da TV vale); a TV manda a dela.
+ */
+const Sync = {
+  timer: 0,
+  busy: false,
+  again: false,
+  onChange: null,
+
+  base() {
+    if (window.TvVideo) return window.IPTV_DEFAULTS?.helper || '';
+    return 'http://127.0.0.1:8790';
+  },
+
+  soon(ms = 4000) {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.run(), ms);
+  },
+
+  async run() {
+    const base = this.base();
+    if (!base) return;
+    if (this.busy) return void (this.again = true);
+    this.busy = true;
+    try {
+      const adopt = !window.TvVideo && !store.get('sync-seeded', false);
+      const res = await fetch(`${base}/state`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(adopt ? { adopt: true } : { state: Watch.snapshot() }),
+      });
+      if (!res.ok) return;
+      const st = await res.json();
+      store.set('sync-seeded', true);
+      if (Watch.apply(st)) this.onChange?.();
+    } catch {
+      // Ajudante desligado ou Mac fora da rede: tenta de novo depois.
+    } finally {
+      this.busy = false;
+      if (this.again) {
+        this.again = false;
+        this.soon(500);
+      }
+    }
+  },
+
+  init(onChange) {
+    this.onChange = onChange;
+    this.run();
+    setInterval(() => this.run(), 30000);
+    document.addEventListener('visibilitychange', () => document.hidden || this.run());
   },
 };
 

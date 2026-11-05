@@ -12,6 +12,8 @@
  *   GET /thumb/<kind>/<id>/<seg>.jpg   foto mais proxima direto
  *   GET /stop?kind=&id=                para de gerar
  *   GET /src/<kind>/<id>.<ext>         video para o ffmpeg (so do proprio Mac)
+ *   POST /state {state, adopt}         junta "Minha Lista", historico e progresso
+ *                                      da TV e do Mac e devolve o resultado
  *
  * Desligar: sh tv/helper/uninstall.sh
  */
@@ -210,6 +212,57 @@ async function loop() {
   }
 }
 
+/* ------------------------------------- lista e progresso compartilhados */
+
+// A TV e o Mac mandam tudo o que tem; aqui junta item a item (vale o mais
+// recente) e devolve o resultado para os dois ficarem iguais.
+const STATE = path.join(APP_DIR, 'state.json');
+let shared = null;
+const loadShared = () => {
+  if (!shared) {
+    try {
+      shared = JSON.parse(fs.readFileSync(STATE, 'utf8'));
+    } catch {
+      shared = {};
+    }
+  }
+  return shared;
+};
+
+function mergeState(a = {}, b = {}) {
+  const cleared = Math.max(a.cleared || 0, b.cleared || 0);
+  const newest = (x = {}, y = {}) => {
+    const out = { ...x };
+    for (const [k, v] of Object.entries(y)) if (!out[k] || (v?.t || 0) > (out[k]?.t || 0)) out[k] = v;
+    return out;
+  };
+  const gone = { ...(a.gone || {}) };
+  for (const [k, t] of Object.entries(b.gone || {})) gone[k] = Math.max(gone[k] || 0, t);
+  const progress = newest(a.progress, b.progress);
+  for (const k of Object.keys(progress)) if ((progress[k]?.t || 0) <= cleared) delete progress[k];
+  const hist = new Map();
+  for (const h of [...(a.history || []), ...(b.history || [])]) {
+    if (!h?.key || h.t <= cleared || (gone[h.key] || 0) >= h.t) continue;
+    if (!hist.has(h.key) || h.t > hist.get(h.key).t) hist.set(h.key, h);
+  }
+  const history = [...hist.values()].sort((x, y) => y.t - x.t).slice(0, 200);
+  return { progress, history, list: newest(a.list, b.list), gone, cleared };
+}
+
+function readBody(req) {
+  return new Promise((ok, fail) => {
+    const parts = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 8e6) req.destroy(new Error('grande demais'));
+      else parts.push(c);
+    });
+    req.on('end', () => ok(Buffer.concat(parts).toString('utf8')));
+    req.on('error', fail);
+  });
+}
+
 /* --------------------------------------------------------------- rede */
 
 http
@@ -220,6 +273,20 @@ http
     try {
       let m;
       if (u.pathname === '/ping') return res.end('ok');
+      if (u.pathname === '/state') {
+        res.setHeader('access-control-allow-headers', 'content-type');
+        if (req.method === 'OPTIONS') return res.writeHead(204).end();
+        if (req.method === 'POST') {
+          const { state, adopt } = JSON.parse((await readBody(req)) || '{}');
+          if (!adopt && state) {
+            shared = mergeState(loadShared(), state);
+            fs.writeFileSync(STATE + '.tmp', JSON.stringify(shared));
+            fs.renameSync(STATE + '.tmp', STATE);
+          }
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(mergeState(loadShared(), {})));
+      }
       if ((m = u.pathname.match(/^\/src\/(movie|series)\/(\d+)\.(\w+)$/))) {
         if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) return res.writeHead(403).end();
         return await source(req, res, m[1], m[2], m[3]);

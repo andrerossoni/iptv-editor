@@ -144,6 +144,11 @@ const App = {
   async init() {
     Player.init();
     Channels.init();
+    // Lista ou progresso mudou no outro aparelho: atualiza a tela se ela mostra isso.
+    Sync.init(() => {
+      if (Player.open_ || !Data.ready) return;
+      if (['home', 'mylist', 'detail'].includes(document.body.dataset.view)) this.refresh();
+    });
     this.applyScale(store.get('scale', 1));
 
     document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => this.tab(b.dataset.view)));
@@ -869,10 +874,7 @@ const App = {
           { class: 'actions' },
           button('Limpar “Continuar assistindo”', null, () => {
             if (!confirm('Apagar o histórico e o progresso de tudo que você assistiu?')) return;
-            Watch.history = [];
-            Watch.progress = {};
-            store.set('history', []);
-            store.set('progress', {});
+            Watch.clearAll();
             toast('Histórico apagado.');
           }),
           button('Fechar o app', 'close', () => native.quit())
