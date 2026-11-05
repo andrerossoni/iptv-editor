@@ -162,6 +162,9 @@ const Player = {
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !retried) {
           retried = true;
           this.hls.recoverMediaError();
+        } else if (opts.onFail) {
+          // Canal com varias versoes: quem abriu tenta a proxima.
+          opts.onFail();
         } else {
           this.showError('O canal não respondeu. Ele pode estar fora do ar agora.');
         }
@@ -371,9 +374,9 @@ const Player = {
     for (const ch of s.channels) {
       const row = h(
         'button',
-        { class: 'p-ch' + (ch.key === s.key ? ' on' : ''), onclick: () => App.playLive(ch, s.channels) },
+        { class: 'p-ch' + (ch.key === (s.chKey || s.key) ? ' on' : ''), onclick: () => App.playLive(ch, s.channels) },
         h('img', { src: ch.poster, loading: 'lazy', onerror: (e) => (e.target.style.visibility = 'hidden') }),
-        h('span', {}, ch.name)
+        h('span', {}, ch.num ? `${ch.num}  ${ch.name}` : ch.name)
       );
       list.append(row);
     }
@@ -384,7 +387,7 @@ const Player = {
   switchChannel(step) {
     const s = this.session;
     if (!s?.channels) return;
-    const i = s.channels.findIndex((c) => c.key === s.key);
+    const i = s.channels.findIndex((c) => c.key === (s.chKey || s.key));
     const next = s.channels[(i + step + s.channels.length) % s.channels.length];
     App.playLive(next, s.channels);
   },

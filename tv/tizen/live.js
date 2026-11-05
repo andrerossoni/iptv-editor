@@ -784,7 +784,8 @@ const Live = {
 
     // Qualquer canal (inicio, busca, "vistos recentemente") abre pela lista unica.
     App.playLive = (item) => {
-      const ch = item.variants ? item : this.find(item);
+      // Canal montado pelo channels.js (mesma chave "ch:...") ou uma versao: sempre o canal desta lista.
+      const ch = this.find(item);
       if (ch) this.play(ch);
     };
 

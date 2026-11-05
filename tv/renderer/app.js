@@ -143,6 +143,7 @@ const App = {
 
   async init() {
     Player.init();
+    Channels.init();
     this.applyScale(store.get('scale', 1));
 
     document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => this.tab(b.dataset.view)));
@@ -355,18 +356,9 @@ const App = {
     }
   },
 
-  playLive(ch, channels) {
-    if (!channels?.length) channels = Data.catById.get(`live:${ch.cat}`)?.items || [ch];
-    Watch.touch(ch);
-    Player.open({
-      kind: 'live',
-      title: ch.name,
-      sub: Data.catName(ch),
-      url: Data.streamUrl('live', ch.id, 'm3u8'),
-      key: ch.key,
-      streamId: ch.id,
-      channels,
-    });
+  /** Canal ao vivo: as versoes do mesmo canal viram um so (channels.js). */
+  playLive(item) {
+    Channels.play(item);
   },
 
   /* ---------------------------------------------------------------- inicio */
@@ -430,7 +422,7 @@ const App = {
     const top = Recs.topOfYear('movie', year);
     if (top.length >= 6) rows.append(row(`Os melhores filmes de ${year}`, top, { noMore: true }));
 
-    const liveRecent = Watch.history.map((x) => Data.byKey.get(x.key)).filter((x) => x?.kind === 'live');
+    const liveRecent = Channels.recent();
     if (liveRecent.length) rows.append(row('Seus canais', liveRecent, { noMore: true }));
 
     // Alguns generos, filmes e series juntos, sorteados por dia para variar a tela inicial.
@@ -553,12 +545,16 @@ const App = {
 
   viewLive(view) {
     if (!Data.ready) return this.splash('Carregando sua lista…');
-    view.append(h('div', { class: 'page-head' }, h('h1', {}, 'Ao Vivo', h('span', { class: 'count' }, `${Data.items.live.length} canais`))));
+    const list = Channels.build();
+    view.append(h('div', { class: 'page-head' }, h('h1', {}, 'Ao Vivo', h('span', { class: 'count' }, `${list.length} canais`))));
     const rows = h('div', { class: 'rows' });
     view.append(rows);
-    const recent = Watch.history.map((x) => Data.byKey.get(x.key)).filter((x) => x?.kind === 'live');
+    const recent = Channels.recent();
     if (recent.length) rows.append(row('Vistos recentemente', recent, { noMore: true }));
-    for (const c of Data.cats.live) rows.append(row(c.name, c.items, { count: true, siblings: c.items }));
+    for (const c of Data.cats.live) {
+      const chs = Channels.inCat(c);
+      if (chs.length) rows.append(row(c.name, chs, { count: true }));
+    }
   },
 
   viewMyList(view) {

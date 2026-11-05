@@ -5,7 +5,7 @@
  * configuracao e o catalogo em disco, e falar com o TMDB (com cache), para a
  * chave nunca ficar exposta na pagina.
  */
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -99,11 +99,12 @@ async function tmdb(apiPath, ttl = TMDB_TTL) {
 function createWindow() {
   // Para testes automaticos: janela invisivel, em tamanho fixo de TV.
   const headless = process.env.IPTV_CINEMA_HEADLESS === '1';
+  // Abre maximizada no tamanho do monitor (sem a barra do Dock), sem tela cheia.
+  const area = screen.getPrimaryDisplay().workArea;
   const win = new BrowserWindow({
-    width: headless ? 1920 : 1600,
-    height: headless ? 1080 : 900,
-    fullscreen: !headless,
-    show: !headless,
+    ...(headless ? { width: 1920, height: 1080 } : area),
+    fullscreen: false,
+    show: false,
     paintWhenInitiallyHidden: true,
     backgroundColor: '#0a0a0d',
     title: 'IPTV Cinema',
@@ -116,6 +117,10 @@ function createWindow() {
       allowRunningInsecureContent: true,
     },
   });
+  if (!headless) {
+    win.maximize();
+    win.show();
+  }
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   // Links externos (trailer, site do TMDB) abrem no navegador padrao.
