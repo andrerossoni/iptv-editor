@@ -191,6 +191,12 @@ const Player = {
       // Sem hls.js (TV): o player nativo toca o HLS sozinho. Quem abriu pode
       // trocar o endereco antes (ex.: achar um servidor do provedor que responde).
       if (opts.kind === 'live') this.loadEpg();
+      // Imagem que nao passa pelo player (antena da TV): quem abriu cuida.
+      if (opts.external) {
+        opts.external();
+        this.poke();
+        return;
+      }
       if (opts.resolve) {
         opts.resolve(opts.url).then((url) => {
           if (this.session !== opts) return;

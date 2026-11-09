@@ -219,6 +219,77 @@ function pickSource(cands, chName) {
   return bestScore > 0 ? best : null;
 }
 
+/**
+ * Canais abertos pela antena da propria TV: abrem na hora, sem internet e sem
+ * gastar conexao do provedor. A antena entra como a primeira versao do canal;
+ * sem sinal, o canal segue pelo IPTV.
+ *
+ * Canais com o mesmo nome na antena e na lista ligam sozinhos. As afiliadas
+ * regionais (nome diferente) ficam aqui: canal da lista -> nome na antena.
+ * Conferido no Espirito Santo: Gazeta e Globo; Vitoria e Record; Tribuna e Band.
+ */
+const ANTENNA_AFFILIATES = {
+  globo: /gazeta/i,
+  record: /vit[oó]ria/i,
+  band: /tribuna/i,
+};
+
+const Antenna = {
+  list: [],
+  shown: false,
+
+  /** Canais que a TV achou na busca da antena (vazio se nao houver antena ou permissao). */
+  async load() {
+    try {
+      if (!window.tizen?.tvchannel) return;
+      this.list = await new Promise((ok, bad) => tizen.tvchannel.getChannelList(ok, bad, 'ALL', 0, 500));
+    } catch {
+      this.list = [];
+    }
+  },
+
+  /** "REDEVIDA HD" e "REDE VIDA" viram a mesma chave. */
+  key: (name) => Live.baseKey(name).replace(/ /g, ''),
+
+  find(ch) {
+    if (!this.list.length) return null;
+    const aff = ANTENNA_AFFILIATES[Live.baseKey(ch.name)];
+    const k = this.key(ch.name);
+    return this.list.find((a) => (aff ? aff.test(a.channelName) : this.key(a.channelName) === k)) || null;
+  },
+
+  /** Mostra a imagem da antena em tela cheia, atras do app, e sintoniza. cb: { ok, nosignal, error } */
+  tune(a, cb) {
+    try {
+      tizen.tvwindow.show(
+        () => {
+          this.shown = true;
+          try {
+            tizen.tvchannel.tune({ major: a.major, minor: a.minor }, { onsuccess: cb.ok, onnosignal: cb.nosignal, onprograminforeceived: () => {} }, cb.error, 'MAIN');
+          } catch (e) {
+            cb.error(e);
+          }
+        },
+        cb.error,
+        ['0px', '0px', '1920px', '1080px'],
+        'MAIN',
+        // Atras da pagina: os controles, a grade e a lista de canais ficam por cima da imagem.
+        'BEHIND'
+      );
+    } catch (e) {
+      cb.error(e);
+    }
+  },
+
+  hide() {
+    if (!this.shown) return;
+    this.shown = false;
+    try {
+      tizen.tvwindow.hide(() => {}, () => {}, 'MAIN');
+    } catch {}
+  },
+};
+
 const Live = {
   channels: [],
   builtFrom: null,
@@ -321,7 +392,10 @@ const Live = {
     this.build();
     this.closeOverlays();
     if (this.cur) clearTimeout(this.cur.up);
-    this.cur = { ch, order: this.ranked(ch), i: 0, cycle: 0 };
+    const a = Antenna.find(ch);
+    const order = this.ranked(ch);
+    if (a) order.unshift({ id: `antena-${a.major}.${a.minor}`, name: 'Antena', antenna: a, key: ch.variants[0].key });
+    this.cur = { ch, order, i: 0, cycle: 0 };
     Watch.touch(ch.variants[0]);
     this.openVariant();
   },
@@ -333,6 +407,8 @@ const Live = {
     c.ok = false;
     c.t0 = Date.now();
     const mine = (c.try = (c.try || 0) + 1);
+    if (v.antenna) return this.openAntenna(c, v, mine);
+    Antenna.hide();
     Player.open({
       kind: 'live',
       title: `${c.ch.num}   ${c.ch.name}`,
@@ -355,6 +431,7 @@ const Live = {
         return final;
       },
       onClose: () => {
+        Antenna.hide();
         clearTimeout(this.cur?.timer);
         clearTimeout(this.cur?.up);
         this.cur = null;
@@ -364,6 +441,41 @@ const Live = {
     });
     // Seguranca: a busca do servidor tem o prazo dela; o do player e marcado quando ele recebe o endereco.
     c.timer = setTimeout(() => this.cur === c && c.try === mine && !c.ok && this.fail(), 25000);
+  },
+
+  /** Canal pela antena: o player do app fica so com os controles; a imagem vem da TV. */
+  openAntenna(c, v, mine) {
+    const live = () => this.cur === c && c.try === mine;
+    Player.open({
+      kind: 'live',
+      title: `${c.ch.num}   ${c.ch.name}`,
+      sub: '',
+      url: '',
+      key: v.key,
+      streamId: c.order.find((x) => !x.antenna)?.id,
+      external: () =>
+        Antenna.tune(v.antenna, {
+          ok: () => {
+            if (!live()) return;
+            c.ok = true;
+            clearTimeout(c.timer);
+            Player.ui.spinner.classList.remove('on');
+            Player.poke();
+          },
+          // Sem sinal (antena desligada, chuva...): segue pelo IPTV.
+          nosignal: () => live() && this.fail(),
+          error: () => live() && this.fail(),
+        }),
+      onClose: () => {
+        Antenna.hide();
+        clearTimeout(this.cur?.timer);
+        clearTimeout(this.cur?.up);
+        this.cur = null;
+        this.closeOverlays();
+        App.refresh();
+      },
+    });
+    c.timer = setTimeout(() => live() && !c.ok && this.fail(), 6000);
   },
 
   started() {
@@ -478,6 +590,14 @@ const Live = {
     // O player da TV avisa o mesmo erro duas vezes: conta uma so por tentativa.
     if (c.failed === c.try) return;
     c.failed = c.try;
+    // Antena sem sinal: passa direto para o IPTV (sem esperar rede, sem nota de velocidade).
+    if (c.order[c.i]?.antenna) {
+      Antenna.hide();
+      c.order.splice(c.i, 1);
+      c.i = 0;
+      if (c.order.length) return this.openVariant();
+      return Player.showError('Sem sinal da antena neste canal.');
+    }
     if (c.host && this.online()) {
       const f = (this.hostFails[c.host] ||= { n: 0, t: 0 });
       f.n++;
@@ -877,6 +997,7 @@ const Live = {
   /* ------------------------------------------------------------- tela */
 
   init() {
+    Antenna.load();
     // Programacao em segundo plano, assim que a lista de canais chegar; depois
     // confere as fontes de hora em hora, ao voltar da espera e quando a lista muda.
     let last = 0;
