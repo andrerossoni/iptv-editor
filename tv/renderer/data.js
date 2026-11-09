@@ -373,7 +373,9 @@ const Watch = {
   /** Registra o titulo no historico; para serie guarda tambem o episodio. */
   touch(item, extra = {}) {
     const prev = this.history.find((x) => x.key === item.key) || {};
-    this.history = [{ ...prev, key: item.key, t: Date.now(), ...extra }, ...this.history.filter((x) => x.key !== item.key)].slice(0, 200);
+    // Canal guarda o nome: se o servidor trocar o codigo dele, o historico acha o novo.
+    const name = item.kind === 'live' ? { name: item.name } : {};
+    this.history = [{ ...prev, key: item.key, t: Date.now(), ...name, ...extra }, ...this.history.filter((x) => x.key !== item.key)].slice(0, 200);
     store.set('history', this.history);
     Sync.soon();
   },

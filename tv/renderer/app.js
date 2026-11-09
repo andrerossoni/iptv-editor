@@ -178,6 +178,7 @@ const App = {
     let first = true;
     try {
       await Data.load(() => {
+        Channels.cleanup();
         if (first) {
           first = false;
           this.go('home', {}, true);

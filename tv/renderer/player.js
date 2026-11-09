@@ -188,8 +188,18 @@ const Player = {
       this.hls.attachMedia(v);
       this.loadEpg();
     } else {
-      // Sem hls.js (TV): o player nativo toca o HLS sozinho.
+      // Sem hls.js (TV): o player nativo toca o HLS sozinho. Quem abriu pode
+      // trocar o endereco antes (ex.: achar um servidor do provedor que responde).
       if (opts.kind === 'live') this.loadEpg();
+      if (opts.resolve) {
+        opts.resolve(opts.url).then((url) => {
+          if (this.session !== opts) return;
+          v.src = url;
+          v.play().catch(() => {});
+        });
+        this.poke();
+        return;
+      }
       v.src = opts.url;
       if (opts.startAt > 5) {
         v.addEventListener(

@@ -310,6 +310,7 @@ const Live = {
   play(ch) {
     this.build();
     this.closeOverlays();
+    if (this.cur) clearTimeout(this.cur.up);
     this.cur = { ch, order: this.ranked(ch), i: 0, cycle: 0 };
     Watch.touch(ch.variants[0]);
     this.openVariant();
@@ -321,6 +322,7 @@ const Live = {
     clearTimeout(c.timer);
     c.ok = false;
     c.t0 = Date.now();
+    c.try = (c.try || 0) + 1;
     Player.open({
       kind: 'live',
       title: `${c.ch.num}   ${c.ch.name}`,
@@ -328,33 +330,135 @@ const Live = {
       url: Data.streamUrl('live', v.id, 'm3u8'),
       key: v.key,
       streamId: v.id,
+      resolve: (url) => {
+        // Versao melhor ja conferida pelo upgrade: usa o endereco que ele achou.
+        const pre = c.pre;
+        c.pre = null;
+        return pre ? Promise.resolve(pre) : this.resolve(url);
+      },
       onClose: () => {
         clearTimeout(this.cur?.timer);
+        clearTimeout(this.cur?.up);
         this.cur = null;
         this.closeOverlays();
         App.refresh();
       },
     });
-    // Demorou demais para abrir: tenta a proxima versao.
-    c.timer = setTimeout(() => this.cur === c && !c.ok && this.fail(), 9000);
+    // Demorou demais para abrir (contando a busca do servidor): tenta a proxima versao.
+    c.timer = setTimeout(() => this.cur === c && !c.ok && this.fail(), 12000);
   },
 
   started() {
     const c = this.cur;
     if (!c || c.ok || Player.session?.key !== c.order[c.i].key) return;
     c.ok = true;
+    c.back = null;
     clearTimeout(c.timer);
     this.record(c.order[c.i], true, (Date.now() - c.t0) / 1000);
+    // Abriu numa versao mais leve: depois de alguns segundos passa para a melhor.
+    const b = Channels.best(c.ch, this.stats);
+    if (!c.upgraded && b && Channels.level(b) > Channels.level(c.order[c.i])) {
+      c.upgraded = true;
+      c.up = setTimeout(() => this.upgrade(c, b), 5000);
+    }
+  },
+
+  /**
+   * A TV so tem um player: nao da para carregar a versao melhor por tras como
+   * no Mac. Ela confere antes se a versao melhor responde (sem parar o que esta
+   * passando) e so entao troca; a tela para 1 a 3 s. Se a melhor nao abrir,
+   * volta para a que estava.
+   */
+  async upgrade(c, b) {
+    if (this.cur !== c || !c.ok || this.listState || this.barState) return;
+    const url = Data.streamUrl('live', b.id, 'm3u8');
+    const pre = await this.resolve(url, 6000);
+    if (this.cur !== c || !c.ok || pre === url) return;
+    c.back = c.i;
+    c.pre = pre;
+    c.i = c.order.indexOf(b);
+    this.openVariant();
+  },
+
+  /**
+   * O provedor sorteia um servidor a cada pedido e as vezes sorteia um endereco
+   * que nao existe: o player da TV fica ate 11 s parado antes de dar erro, e o
+   * canal parecia nao carregar. Aqui a TV pede a lista do canal antes: no
+   * endereco morto a falha vem em menos de 1 s e ela pede de novo, ate cair num
+   * servidor que responde. O player recebe esse endereco final.
+   */
+  async resolve(url, ms = 15000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 5000);
+      try {
+        const res = await fetch(url, { signal: ctl.signal });
+        if (res.ok) {
+          await res.text();
+          return res.url || url;
+        }
+      } catch {
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!this.online()) await this.waitNet();
+      else await new Promise((r) => setTimeout(r, 300));
+    }
+    return url;
+  },
+
+  /** A TV esta na rede? Logo depois de ligar, o Wi-Fi leva alguns segundos. */
+  online() {
+    try {
+      return webapis.network.isConnectedToGateway();
+    } catch {
+      return navigator.onLine !== false;
+    }
+  },
+
+  /** Espera a rede voltar (ate 40 s). */
+  async waitNet(ms = 40000) {
+    const t0 = Date.now();
+    while (!this.online() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 1000));
+    return this.online();
+  },
+
+  /** Abre de novo o canal que estava na tela (ex.: a TV foi desligada e ligada). */
+  async reopen() {
+    const c = this.cur;
+    if (!c || !Player.open_ || Player.session?.kind !== 'live') return;
+    clearTimeout(c.timer);
+    Player.ui.spinner.classList.add('on');
+    Player.ui.error.classList.remove('on');
+    await this.waitNet();
+    if (this.cur === c) this.play(c.ch);
   },
 
   fail() {
     const c = this.cur;
     if (!c) return;
+    // O player da TV avisa o mesmo erro duas vezes: conta uma so por tentativa.
+    if (c.failed === c.try) return;
+    c.failed = c.try;
+    // A versao melhor nao abriu: volta para a que estava tocando.
+    if (c.back != null) {
+      this.record(c.order[c.i], false);
+      c.i = c.back;
+      c.back = null;
+      return this.openVariant();
+    }
+    // Sem rede a culpa nao e da versao: espera voltar e tenta a mesma.
+    if (!this.online()) {
+      clearTimeout(c.timer);
+      return this.waitNet(10 * 60000).then(() => this.cur === c && this.openVariant());
+    }
     this.record(c.order[c.i], false);
     c.i++;
     if (c.i < c.order.length) return this.openVariant();
     // Todas falharam: o provedor costuma recusar por alguns segundos depois de uma troca.
-    if (c.cycle++ < 1) {
+    // Canal com uma ou duas versoes ganha mais voltas: o provedor as vezes manda para um servidor morto.
+    if (c.cycle++ < Math.max(1, Math.ceil(4 / c.order.length) - 1)) {
       c.i = 0;
       return setTimeout(() => this.cur === c && this.openVariant(), 2500);
     }
@@ -740,6 +844,24 @@ const Live = {
       this.loading ||= this.loadAll().finally(() => (this.loading = null));
     };
     document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refresh(15 * 60000));
+
+    // TV desligada (ou app em segundo plano) e ligada de novo: o app volta na
+    // tela do canal, mas o video morreu junto. Reabre o canal sozinho.
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) hiddenAt = Date.now();
+      else if (hiddenAt) {
+        hiddenAt = 0;
+        this.reopen();
+      }
+    });
+    // A rede caiu e voltou com o canal aberto e travado: reabre tambem.
+    window.addEventListener('online', () => this.cur && !this.cur.ok && this.reopen());
+    try {
+      webapis.network.addNetworkStateChangeListener((st) => {
+        if (st === webapis.network.NetworkState.GATEWAY_CONNECTED && this.cur && Player.ui.error.classList.contains('on')) this.reopen();
+      });
+    } catch {}
     const wait = setInterval(() => {
       if (!Data.ready || !Data.cfg.server) return;
       clearInterval(wait);

@@ -974,6 +974,22 @@ a {
   background: #000;
 }
 
+/* Versao melhor do canal carregando por tras; cobre a tela so durante a troca. */
+.p-shadow {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.p-shadow.on {
+  opacity: 1;
+}
+
 .p-ui {
   position: absolute;
   inset: 0;
@@ -1553,4 +1569,9 @@ body.tv .p-cc-item.sel {
 
 #player.scrubbing .p-subs {
   visibility: hidden;
+}
+
+/* Durante a troca de versao do canal a imagem continua: sem "carregando" por cima. */
+#player:has(.p-shadow.on) .p-spinner {
+  display: none;
 }

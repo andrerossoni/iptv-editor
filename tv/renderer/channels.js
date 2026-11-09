@@ -3,7 +3,11 @@
  * canal so ("HBO"). Ao abrir, o app escolhe sozinho a versao que abre mais
  * rapido (e aprende com o uso); se uma falhar ou demorar, passa para a proxima.
  *
- * Na TV o tizen/live.js faz isso com a tela dele; la este arquivo nao e usado.
+ * Abre na versao que abre mais rapido e, se houver uma com imagem melhor,
+ * carrega essa por tras e troca com uma piscada (como os apps de TV ao vivo).
+ *
+ * Na TV o tizen/live.js toca os canais com a tela dele; de la ele usa daqui
+ * so as regras de qualidade (level, best) e a limpeza (cleanup).
  */
 const Channels = {
   QUALITY: /\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b/gi,
@@ -84,6 +88,69 @@ const Channels = {
     return 0.3;
   },
 
+  /** Nivel da imagem: 1 SD, 2 HD (ou sem marca), 3 FHD, 4 4K. */
+  level(v) {
+    const n = v.name;
+    if (/\b(uhd|4k)\b/i.test(n)) return 4;
+    if (/\b(fhd|full\s*hd)\b/i.test(n)) return 3;
+    if (/\bsd\b/i.test(n)) return 1;
+    return 2;
+  },
+
+  /**
+   * Versao com a melhor imagem que costuma funcionar (sem 4K: pesado demais
+   * para a rede de casa). O canal abre na mais rapida e depois passa para esta.
+   */
+  best(ch, stats = this.stats) {
+    const ok = ch.variants.filter((v) => this.level(v) <= 3 && (stats[v.id]?.fails || 0) < 3);
+    return ok.sort((a, b) => this.level(b) - this.level(a) || (stats[a.id]?.avg || 3) - (stats[b.id]?.avg || 3))[0] || null;
+  },
+
+  /**
+   * O servidor tirou ou trocou canais: apaga as anotacoes de versoes que
+   * sumiram, e o historico de um canal que voltou com outro codigo (mesmo
+   * nome) passa para o novo. O que sumiu de vez sai do historico.
+   */
+  cleanup() {
+    const live = Data.items.live || [];
+    if (live.length < 20) return; // lista incompleta: melhor nao mexer
+    const ids = new Set(live.map((v) => String(v.id)));
+    const prune = (stats) => Object.keys(stats).filter((id) => !ids.has(String(id))).forEach((id) => delete stats[id]);
+    prune(this.stats);
+    const tv = typeof Live !== 'undefined' ? Live : null;
+    if (tv) prune(tv.stats);
+    store.set('live-stats', tv ? tv.stats : this.stats);
+
+    this.build();
+    const byBase = new Map(this.list.map((ch) => [this.baseKey(ch.name), ch]));
+    let changed = false;
+    const seen = new Set();
+    const hist = [];
+    for (const h of Watch.history) {
+      let x = h;
+      if (String(h.key).startsWith('live:')) {
+        const item = Data.byKey.get(h.key);
+        if (item) {
+          if (!h.name) x = { ...h, name: item.name };
+        } else {
+          const ch = h.name && byBase.get(this.baseKey(h.name));
+          Watch.gone[h.key] = Math.max(Watch.gone[h.key] || 0, h.t);
+          x = ch ? { ...h, key: ch.variants[0].key } : null;
+        }
+        if (x !== h) changed = true;
+      }
+      if (x && !seen.has(x.key)) {
+        seen.add(x.key);
+        hist.push(x);
+      } else if (x) changed = true;
+    }
+    if (!changed) return;
+    Watch.history = hist;
+    store.set('history', hist);
+    store.set('history-gone', Watch.gone);
+    Sync.soon();
+  },
+
   /** Nota de cada versao: tempo medio para abrir + falhas recentes + peso da qualidade. Menor e melhor. */
   score(v) {
     const st = this.stats[v.id] || {};
@@ -109,7 +176,7 @@ const Channels = {
   play(item) {
     const ch = this.find(item);
     if (!ch) return;
-    if (this.cur) clearTimeout(this.cur.timer);
+    if (this.cur) this.drop(this.cur);
     this.cur = { ch, order: this.ranked(ch), i: 0, cycle: 0 };
     Watch.touch(ch.variants[0]);
     this.openVariant();
@@ -133,7 +200,7 @@ const Channels = {
       onFail: () => this.cur === c && this.fail(),
       onClose: () => {
         if (this.cur === c) {
-          clearTimeout(c.timer);
+          this.drop(c);
           this.cur = null;
         }
       },
@@ -148,6 +215,80 @@ const Channels = {
     c.ok = true;
     clearTimeout(c.timer);
     this.record(c.order[c.i], true, (Date.now() - c.t0) / 1000);
+    // Abriu numa versao mais leve: carrega a melhor por tras e troca.
+    const b = this.best(c.ch);
+    if (!c.upgraded && b && this.level(b) > this.level(c.order[c.i]) && window.Hls) {
+      c.upgraded = true;
+      c.up = setTimeout(() => this.cur === c && this.upgrade(c, b), 2000);
+    }
+  },
+
+  /** Para tudo que o canal deixou rodando (timers e o video de tras). */
+  drop(c) {
+    clearTimeout(c.timer);
+    clearTimeout(c.up);
+    c.shadowDone?.();
+  },
+
+  /**
+   * Troca para a versao melhor sem tela preta: um video escondido (sem som)
+   * carrega a versao melhor; quando ele ja esta tocando, cobre a tela, o player
+   * reabre nessa versao por baixo e a capa sai quando ele volta a tocar. Na
+   * tela aparece so uma piscada. Nunca passa de 2 conexoes com o provedor.
+   */
+  upgrade(c, b) {
+    const shadow = document.createElement('video');
+    shadow.className = 'p-shadow';
+    shadow.muted = true;
+    shadow.playsInline = true;
+    Player.video.after(shadow);
+    const hls = new Hls({ lowLatencyMode: false, backBufferLength: 10 });
+    let giveUp = 0;
+    const done = () => {
+      clearTimeout(giveUp);
+      c.shadowDone = null;
+      hls.destroy();
+      shadow.remove();
+    };
+    c.shadowDone = done;
+    // A melhor nao abriu: fica na que esta, sem avisar.
+    giveUp = setTimeout(() => {
+      this.record(b, false);
+      done();
+    }, 15000);
+    hls.on(Hls.Events.ERROR, (_e, d) => {
+      if (!d.fatal || !c.shadowDone) return;
+      this.record(b, false);
+      done();
+    });
+    hls.loadSource(Data.streamUrl('live', b.id, 'm3u8'));
+    hls.attachMedia(shadow);
+    shadow.play().catch(() => {});
+    shadow.addEventListener(
+      'playing',
+      () => {
+        if (this.cur !== c || c.shadowDone !== done) return done();
+        clearTimeout(giveUp);
+        shadow.volume = Player.video.volume;
+        shadow.muted = Player.video.muted;
+        shadow.classList.add('on');
+        c.i = c.order.indexOf(b);
+        this.openVariant();
+        const main = Player.video;
+        const off = () => {
+          if (main.currentTime <= 0) return;
+          main.removeEventListener('timeupdate', off);
+          done();
+        };
+        main.addEventListener('timeupdate', off);
+        // Se o player demorar, tira a capa assim mesmo.
+        giveUp = setTimeout(() => {
+          main.removeEventListener('timeupdate', off);
+          done();
+        }, 12000);
+      },
+      { once: true }
+    );
   },
 
   fail() {
