@@ -12,6 +12,7 @@
  *   GET /thumb/<kind>/<id>/<seg>.jpg   foto mais proxima direto
  *   GET /stop?kind=&id=                para de gerar
  *   GET /src/<kind>/<id>.<ext>         video para o ffmpeg (so do proprio Mac)
+ *   GET /live/<id>                     endereco final de um canal ao vivo, sem abrir o video
  *   POST /state {state, adopt}         junta "Minha Lista", historico e progresso
  *                                      da TV e do Mac e devolve o resultado
  *
@@ -23,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
+import dns from 'node:dns/promises';
 
 const PORT = 8790;
 const STEP = 10;
@@ -212,6 +214,45 @@ async function loop() {
   }
 }
 
+/* ------------------------------------------------- canal ao vivo (TV) */
+
+// O provedor sorteia o servidor de video a cada pedido e as vezes sorteia um
+// endereco que nao existe. Aqui segue os redirecionamentos na mao e confere so
+// o nome do servidor final (DNS), sem pedir o video: assim a TV nao gasta uma
+// das 2 conexoes que o provedor aceita. Sorteia de novo ate dar um que existe.
+async function liveUrl(id, avoid = []) {
+  const c = cfg();
+  const start = `${c.server.replace(/\/$/, '')}/live/${c.user}/${c.pass}/${id}.m3u8`;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    let url = start;
+    for (let hop = 0; hop < 6; hop++) {
+      const r = await fetch(url, { headers: UA, redirect: 'manual', signal: AbortSignal.timeout(5000) });
+      const loc = r.headers.get('location');
+      r.body?.cancel().catch(() => {});
+      if (r.status < 300 || r.status >= 400 || !loc) break;
+      const next = new URL(loc, url);
+      try {
+        await dns.lookup(next.hostname);
+      } catch {
+        url = null; // servidor sorteado nao existe: pede de novo
+        break;
+      }
+      url = next.href;
+      // Chegou no servidor de video (nao e mais o Worker nem o balanceador): para aqui.
+      // Servidor que a TV viu travar ha pouco: sorteia de novo (ate metade das tentativas).
+      if (/\/hls\/|token=/.test(url) || /^lb\d+\./.test(next.hostname)) {
+        if (avoid.includes(next.hostname) && attempt < 6) {
+          url = null;
+          break;
+        }
+        return url;
+      }
+    }
+    if (url && url !== start) return url;
+  }
+  return null;
+}
+
 /* ------------------------------------- lista e progresso compartilhados */
 
 // A TV e o Mac mandam tudo o que tem; aqui junta item a item (vale o mais
@@ -273,6 +314,14 @@ http
     try {
       let m;
       if (u.pathname === '/ping') return res.end('ok');
+      if ((m = u.pathname.match(/^\/live\/(\d+)$/))) {
+        const t0 = Date.now();
+        const url = await liveUrl(m[1], (q.avoid || '').split(',').filter(Boolean));
+        log('canal', m[1], url ? new URL(url).hostname : 'sem servidor', `${Date.now() - t0} ms`);
+        if (!url) return res.writeHead(502).end();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ url }));
+      }
       if (u.pathname === '/state') {
         res.setHeader('access-control-allow-headers', 'content-type');
         if (req.method === 'OPTIONS') return res.writeHead(204).end();

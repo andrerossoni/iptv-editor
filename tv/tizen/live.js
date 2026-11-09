@@ -223,6 +223,16 @@ const Live = {
   channels: [],
   builtFrom: null,
   cur: null,
+  /** Servidores do provedor em que o player travou ha pouco (o ajudante evita esses). */
+  hostFails: {},
+
+  hostOf(url) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  },
   stats: store.get('live-stats', {}),
   epgCache: new Map(),
 
@@ -322,7 +332,7 @@ const Live = {
     clearTimeout(c.timer);
     c.ok = false;
     c.t0 = Date.now();
-    c.try = (c.try || 0) + 1;
+    const mine = (c.try = (c.try || 0) + 1);
     Player.open({
       kind: 'live',
       title: `${c.ch.num}   ${c.ch.name}`,
@@ -330,11 +340,19 @@ const Live = {
       url: Data.streamUrl('live', v.id, 'm3u8'),
       key: v.key,
       streamId: v.id,
-      resolve: (url) => {
+      resolve: async (url) => {
         // Versao melhor ja conferida pelo upgrade: usa o endereco que ele achou.
         const pre = c.pre;
         c.pre = null;
-        return pre ? Promise.resolve(pre) : this.resolve(url);
+        const final = pre || (await this.resolve(url));
+        c.host = this.hostOf(final);
+        // Quando funciona, o player comeca em 2 a 3,5 s depois de receber o
+        // endereco; as vezes ele trava calado (sem erro). O prazo conta daqui.
+        if (this.cur === c && c.try === mine) {
+          clearTimeout(c.timer);
+          c.timer = setTimeout(() => this.cur === c && c.try === mine && !c.ok && this.fail(), 7000);
+        }
+        return final;
       },
       onClose: () => {
         clearTimeout(this.cur?.timer);
@@ -344,8 +362,8 @@ const Live = {
         App.refresh();
       },
     });
-    // Demorou demais para abrir (contando a busca do servidor): tenta a proxima versao.
-    c.timer = setTimeout(() => this.cur === c && !c.ok && this.fail(), 12000);
+    // Seguranca: a busca do servidor tem o prazo dela; o do player e marcado quando ele recebe o endereco.
+    c.timer = setTimeout(() => this.cur === c && c.try === mine && !c.ok && this.fail(), 25000);
   },
 
   started() {
@@ -353,6 +371,7 @@ const Live = {
     if (!c || c.ok || Player.session?.key !== c.order[c.i].key) return;
     c.ok = true;
     c.back = null;
+    if (c.host) delete this.hostFails[c.host];
     clearTimeout(c.timer);
     this.record(c.order[c.i], true, (Date.now() - c.t0) / 1000);
     // Abriu numa versao mais leve: depois de alguns segundos passa para a melhor.
@@ -389,9 +408,27 @@ const Live = {
    */
   async resolve(url, ms = 15000) {
     const t0 = Date.now();
+    // Com o ajudante do Mac ligado, ele acha o servidor sem abrir o video: a TV
+    // nao gasta uma das 2 conexoes que o provedor aceita (gastar fazia o player travar).
+    const helper = window.IPTV_DEFAULTS?.helper;
+    const id = url.match(/\/live\/[^/]+\/[^/]+\/(\d+)\./)?.[1];
+    if (helper && id) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), ms);
+      try {
+        const avoid = Object.entries(this.hostFails)
+          .filter(([, f]) => f.n >= 2 && Date.now() - f.t < 30 * 60000)
+          .map(([h]) => h);
+        const res = await fetch(`${helper}/live/${id}?avoid=${avoid.join(',')}`, { signal: ctl.signal });
+        if (res.ok) return (await res.json()).url;
+      } catch {
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     while (Date.now() - t0 < ms) {
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 5000);
+      const timer = setTimeout(() => ctl.abort(), 4000);
       try {
         const res = await fetch(url, { signal: ctl.signal });
         if (res.ok) {
@@ -441,6 +478,11 @@ const Live = {
     // O player da TV avisa o mesmo erro duas vezes: conta uma so por tentativa.
     if (c.failed === c.try) return;
     c.failed = c.try;
+    if (c.host && this.online()) {
+      const f = (this.hostFails[c.host] ||= { n: 0, t: 0 });
+      f.n++;
+      f.t = Date.now();
+    }
     // A versao melhor nao abriu: volta para a que estava tocando.
     if (c.back != null) {
       this.record(c.order[c.i], false);
