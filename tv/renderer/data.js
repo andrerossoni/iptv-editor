@@ -35,31 +35,62 @@ const Data = {
 
   /**
    * Abre com a copia salva (instantaneo) e atualiza pela rede em seguida.
-   * Copia de menos de 20 minutos nao e baixada de novo, e se o servidor
-   * devolver a mesma lista a tela nao e redesenhada.
+   * A lista so muda quando o editor publica: antes de baixar ~15 MB, pergunta
+   * ao servidor a data da ultima publicacao (uma resposta minuscula). Mesma
+   * data, nada a baixar. Servidor antigo, sem essa resposta: baixa a cada 6h.
    */
   async load(onChange) {
     this.cfg = await native.getConfig();
+    this.onChange = onChange;
     const cached = await native.cacheGet('catalog');
     if (cached) {
       this.apply(cached);
+      this.pub = cached.pub || null;
       onChange();
     }
     if (!this.cfg.server) return;
-    if (cached && Date.now() - (cached.at || 0) < 20 * 60000) return;
     try {
-      const raw = await this.fetchAll();
-      if (cached && this.signature(raw) === this.signature(cached)) {
-        native.cacheSet('catalog', raw);
-        return;
-      }
-      this.apply(raw);
-      native.cacheSet('catalog', raw);
-      onChange();
+      await this.refresh(cached);
     } catch (err) {
       if (!cached) throw err;
       toast('Sem conexão com o servidor — mostrando a última cópia salva.');
     }
+  },
+
+  /** Data da ultima publicacao no editor (null se o servidor nao souber dizer). */
+  async published() {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 6000);
+      const res = await fetch(this.apiUrl('get_publish_info'), { signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      const d = await res.json();
+      return (d && !Array.isArray(d) && d.generatedAt) || null;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Baixa o catalogo so se o editor publicou de novo (ou, sem essa informacao, se a copia passou de 6h). */
+  async refresh(cached = this.ready ? { at: this.loadedAt, pub: this.pub } : null) {
+    const pub = await this.published();
+    store.set('catalog-checked', Date.now());
+    if (cached && (pub ? pub === cached.pub : Date.now() - (cached.at || 0) < 6 * 3600000)) return false;
+    const raw = await this.fetchAll();
+    raw.pub = pub;
+    this.pub = pub;
+    native.cacheSet('catalog', raw);
+    if (cached && this.signature(raw) === this.signature(cached)) return false;
+    this.apply(raw);
+    this.onChange?.();
+    return true;
+  },
+
+  /** Voltou para o app (a TV fica com ele aberto por dias): confere a publicacao, no maximo a cada 15 min. */
+  recheck() {
+    if (!this.ready || !this.cfg.server || Date.now() - store.get('catalog-checked', 0) < 15 * 60000) return;
+    this.refresh().catch(() => {});
   },
 
   /** Resumo barato da lista: muda se entrar, sair ou atualizar qualquer titulo. */
@@ -322,7 +353,19 @@ const Data = {
     return null;
   },
 
+  /** Programa de agora e o proximo; a resposta vale 10 min (a tela atualiza a cada minuto). */
   async shortEpg(streamId) {
+    this.epgMemo ||= new Map();
+    const hit = this.epgMemo.get(streamId);
+    const now = Date.now();
+    // Refaz antes se o ultimo programa da resposta ja acabou.
+    if (hit && now - hit.t < 10 * 60000 && !(hit.list.at(-1)?.end <= now)) return hit.list;
+    const list = await this.fetchShortEpg(streamId);
+    this.epgMemo.set(streamId, { t: now, list });
+    return list;
+  },
+
+  async fetchShortEpg(streamId) {
     try {
       const d = await this.api('get_short_epg', { stream_id: streamId, limit: 2 });
       const dec = (s) => {
@@ -431,6 +474,9 @@ const Watch = {
 
   /** Recebe o resultado juntado; diz se a lista ou o historico mudaram. */
   apply(st) {
+    // Igual ao que ja temos (o caso comum): nada a regravar nem redesenhar.
+    const next = { progress: st.progress || {}, history: st.history || [], list: st.list || {}, gone: st.gone || {}, cleared: st.cleared || 0 };
+    if (JSON.stringify(next) === JSON.stringify(this.snapshot())) return false;
     const before = this.shape();
     this.progress = st.progress || {};
     this.history = st.history || [];
@@ -520,7 +566,8 @@ const Sync = {
   init(onChange) {
     this.onChange = onChange;
     this.run();
-    setInterval(() => this.run(), 30000);
+    // Mudanca feita aqui ja vai na hora (soon); a conferida periodica so traz o que veio do outro aparelho.
+    setInterval(() => document.hidden || this.run(), 120000);
     document.addEventListener('visibilitychange', () => document.hidden || this.run());
   },
 };

@@ -12,17 +12,6 @@
  *   Voltar     fecha a barra/lista, ou sai do canal
  */
 
-const QUALITY = /\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc)\b/gi;
-
-/** "20261027190500 -0300" -> milissegundos. */
-function xmltvTime(s) {
-  const m = String(s || '').match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\s*([+-])(\d\d)(\d\d)/);
-  if (!m) return 0;
-  const utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  const offset = (+m[8] * 60 + +m[9]) * 60000 * (m[7] === '-' ? -1 : 1);
-  return utc - offset;
-}
-
 /**
  * Guias publicos de TV do Brasil (XMLTV), na ordem de preferencia para desempate.
  * Fontes da mesma familia vem do mesmo autor: uma nao confirma a outra.
@@ -37,21 +26,6 @@ const EPG_SOURCES = [
   { name: 'open-epg 1', family: 'open-epg', url: 'https://www.open-epg.com/files/brazil1.xml.gz', every: 6 * 3600000 },
 ];
 
-/** Baixa um XMLTV; os .gz sao descompactados na propria TV. Desiste em 2 minutos. */
-async function fetchXml(url) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 120000);
-  try {
-    const res = await fetch(url, { signal: ctl.signal });
-    if (!res.ok) return '';
-    if (!url.endsWith('.gz')) return await res.text();
-    if (typeof DecompressionStream === 'undefined') return '';
-    return await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** Data e tamanho do arquivo sem baixar (HEAD): diz se a fonte mudou desde a ultima vez. */
 async function fileStamp(url) {
   try {
@@ -64,100 +38,6 @@ async function fileStamp(url) {
   } catch {
     return '';
   }
-}
-
-/** Nome de canal para cruzar entre fontes: sem qualidade, acento, "TV", "Brasil" etc. */
-function epgKey(name) {
-  return String(name || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[¹²³]/g, '')
-    .replace(/\+/g, ' plus ')
-    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
-    .replace(/\b(fhd|full\s*hd|uhd|4k|hd|sd|h\.?265|hevc|br|brasil|brazil|canal|channel|tv)\b/g, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\b0+(\d)/g, '$1')
-    .trim();
-}
-
-/** Jeitos de o mesmo canal aparecer nos guias ("TC Pipoca" = "Telecine Pipoca", "SBT SP" = "SBT" de Sao Paulo). */
-function epgAliases(name) {
-  const k = epgKey(name);
-  const uf = k.replace(/ (ac|al|am|ap|ba|ce|df|es|go|ma|mg|ms|mt|pa|pb|pe|pi|pr|rj|rn|ro|rr|rs|sc|se|sp|to)$/, '');
-  const list = [k, k.replace(/^tc /, 'telecine '), k.replace(/ 1$/, ''), k.replace(/\bsp\b/, 'sao paulo'), k.replace(/\bsp\b/, '').trim(), uf];
-  // "BANDSPORTS" e "Band Sports" sao o mesmo canal: tenta tambem sem espacos.
-  // "REDETV!" grudado: o "TV" nao sai sozinho como em "Rede TV".
-  return [...new Set([...list, ...list.map((x) => x.replace(/ /g, '')), k.replace(/tv\b/, '').trim()])].filter(Boolean);
-}
-
-/**
- * Sem o "TV", "TV Universal" e "Universal TV" viram o mesmo nome. Quando dois
- * canais da lista colidem assim, cada um so aceita guia com o "TV" na mesma
- * posicao; nos outros, so barra o "TV" na ponta oposta.
- */
-const tvAt = (name) => {
-  const s = String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(QUALITY, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
-  return /^tv\b/.test(s) ? 'start' : /\btv$/.test(s) ? 'end' : /\btv\b/.test(s) ? 'mid' : '';
-};
-function sameKind(chName, labels, strict) {
-  const ch = tvAt(chName);
-  if (!labels?.length) return !strict || ch !== 'start';
-  // Nos gemeos, o "TV ..." so fica com guia que seja so dele (o codigo do provedor as vezes e o mesmo dos dois).
-  if (strict) return ch === 'start' ? labels.every((l) => tvAt(l) === 'start') : !labels.some((l) => tvAt(l) === 'start');
-  return !labels.every((l) => (ch === 'start' && tvAt(l) === 'end') || (ch === 'end' && tvAt(l) === 'start'));
-}
-
-const xmlText = (s) =>
-  String(s || '')
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
-    .replace(/&amp;/g, '&')
-    .trim();
-
-/** Nomes dos canais de um XMLTV: "record sp" -> id do canal no arquivo (e os rotulos de cada id). */
-function xmltvNames(xml) {
-  const names = new Map();
-  names.labels = new Map();
-  for (const m of xml.matchAll(/<channel\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/g)) {
-    for (const d of m[2].matchAll(/<display-name[^>]*>([^<]+)</g)) {
-      // "Sao Paulo/SP  Record HD" -> "record sp" e "record"
-      const raw = xmlText(d[1]);
-      if (!names.labels.has(m[1])) names.labels.set(m[1], []);
-      names.labels.get(m[1]).push(raw.replace(/^.*?\/[A-Z]{2}\s+/, ''));
-      const city = raw.match(/^.*?\/([A-Z]{2})\s+(.*)$/);
-      const keys = city ? [`${epgKey(city[2])} ${city[1].toLowerCase()}`, epgKey(city[2])] : [epgKey(raw)];
-      for (const k of keys.flatMap((x) => [x, x.replace(/ /g, '')])) if (k && !names.has(k)) names.set(k, m[1]);
-    }
-  }
-  return names;
-}
-
-/**
- * Programas de um XMLTV, lidos com expressoes regulares (bem mais leve que
- * montar o XML inteiro na memoria da TV). So dos canais pedidos, de 6h atras
- * ate 2 dias a frente.
- */
-function xmltvProgs(xml, ids) {
-  const since = Date.now() - 6 * 3600000;
-  const until = Date.now() + 2 * 86400000;
-  const progs = new Map();
-  for (const m of xml.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
-    const id = (m[1].match(/\bchannel="([^"]+)"/) || [])[1];
-    if (!ids.has(id)) continue;
-    const end = xmltvTime((m[1].match(/\bstop="([^"]+)"/) || [])[1]);
-    const start = xmltvTime((m[1].match(/\bstart="([^"]+)"/) || [])[1]);
-    if (end < since || start > until) continue;
-    const title = xmlText((m[2].match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1]);
-    const desc = xmlText((m[2].match(/<desc[^>]*>([\s\S]*?)<\/desc>/) || [])[1]).slice(0, 400);
-    if (!progs.has(id)) progs.set(id, []);
-    progs.get(id).push([start, end, title, desc]);
-  }
-  return progs;
 }
 
 /** A fonte so vale para o canal se tiver o programa de agora e mais alguns pela frente. */
@@ -227,11 +107,13 @@ function pickSource(cands, chName) {
  * Canais com o mesmo nome na antena e na lista ligam sozinhos. As afiliadas
  * regionais (nome diferente) ficam aqui: canal da lista -> nome na antena.
  * Conferido no Espirito Santo: Gazeta e Globo; Vitoria e Record; Tribuna e Band.
+ * O valor pode ser o nome na antena (regex) ou o numero do canal ("10.1").
  */
 const ANTENNA_AFFILIATES = {
   globo: /gazeta/i,
   record: /vit[oó]ria/i,
   band: /tribuna/i,
+  sbt: '10.1',
 };
 
 const Antenna = {
@@ -255,7 +137,11 @@ const Antenna = {
     if (!this.list.length) return null;
     const aff = ANTENNA_AFFILIATES[Live.baseKey(ch.name)];
     const k = this.key(ch.name);
-    return this.list.find((a) => (aff ? aff.test(a.channelName) : this.key(a.channelName) === k)) || null;
+    const match = (a) => {
+      if (typeof aff === 'string') return `${a.major}.${a.minor}` === aff;
+      return aff ? aff.test(a.channelName) : this.key(a.channelName) === k;
+    };
+    return this.list.find(match) || null;
   },
 
   /** Mostra a imagem da antena em tela cheia, atras do app, e sintoniza. cb: { ok, nosignal, error } */
@@ -357,23 +243,9 @@ const Live = {
 
   /* ------------------------------------------- escolha da melhor versao */
 
-  quality(v) {
-    const n = v.name;
-    if (/\b(uhd|4k)\b/i.test(n)) return 2.5; // pesado demais para a rede de casa
-    if (/\bsd\b/i.test(n)) return 1.2; // abre rapido, mas imagem fraca
-    if (/\b(fhd|full\s*hd)\b/i.test(n)) return 0.4;
-    if (/\bhd\b/i.test(n)) return 0;
-    return 0.3;
-  },
-
-  /** Nota de cada versao: tempo medio para abrir + falhas recentes + peso da qualidade. Menor e melhor. */
-  score(v) {
-    const st = this.stats[v.id] || {};
-    return (st.n ? st.avg : 3) + (st.fails || 0) * 4 + this.quality(v);
-  },
-
+  /** Ordem fixa: HD, outras versoes HD, FHD, 4K, SD (regra no channels.js). */
   ranked(ch) {
-    return ch.variants.slice().sort((a, b) => this.score(a) - this.score(b));
+    return Channels.ranked(ch);
   },
 
   record(v, ok, seconds) {
@@ -417,10 +289,7 @@ const Live = {
       key: v.key,
       streamId: v.id,
       resolve: async (url) => {
-        // Versao melhor ja conferida pelo upgrade: usa o endereco que ele achou.
-        const pre = c.pre;
-        c.pre = null;
-        const final = pre || (await this.resolve(url));
+        const final = await this.resolve(url);
         c.host = this.hostOf(final);
         // Quando funciona, o player comeca em 2 a 3,5 s depois de receber o
         // endereco; as vezes ele trava calado (sem erro). O prazo conta daqui.
@@ -482,33 +351,10 @@ const Live = {
     const c = this.cur;
     if (!c || c.ok || Player.session?.key !== c.order[c.i].key) return;
     c.ok = true;
-    c.back = null;
     if (c.host) delete this.hostFails[c.host];
     clearTimeout(c.timer);
     this.record(c.order[c.i], true, (Date.now() - c.t0) / 1000);
-    // Abriu numa versao mais leve: depois de alguns segundos passa para a melhor.
-    const b = Channels.best(c.ch, this.stats);
-    if (!c.upgraded && b && Channels.level(b) > Channels.level(c.order[c.i])) {
-      c.upgraded = true;
-      c.up = setTimeout(() => this.upgrade(c, b), 5000);
-    }
-  },
-
-  /**
-   * A TV so tem um player: nao da para carregar a versao melhor por tras como
-   * no Mac. Ela confere antes se a versao melhor responde (sem parar o que esta
-   * passando) e so entao troca; a tela para 1 a 3 s. Se a melhor nao abrir,
-   * volta para a que estava.
-   */
-  async upgrade(c, b) {
-    if (this.cur !== c || !c.ok || this.listState || this.barState) return;
-    const url = Data.streamUrl('live', b.id, 'm3u8');
-    const pre = await this.resolve(url, 6000);
-    if (this.cur !== c || !c.ok || pre === url) return;
-    c.back = c.i;
-    c.pre = pre;
-    c.i = c.order.indexOf(b);
-    this.openVariant();
+    // Fica na versao que abriu: sem troca automatica para outra.
   },
 
   /**
@@ -603,13 +449,6 @@ const Live = {
       f.n++;
       f.t = Date.now();
     }
-    // A versao melhor nao abriu: volta para a que estava tocando.
-    if (c.back != null) {
-      this.record(c.order[c.i], false);
-      c.i = c.back;
-      c.back = null;
-      return this.openVariant();
-    }
     // Sem rede a culpa nao e da versao: espera voltar e tenta a mesma.
     if (!this.online()) {
       clearTimeout(c.timer);
@@ -658,7 +497,8 @@ const Live = {
       if (cached?.by) this.useAll(cached);
     }
     const q = new URLSearchParams({ username: Data.cfg.user, password: Data.cfg.pass });
-    const sources = [...EPG_SOURCES, { name: 'provedor', family: 'provedor', url: `${Data.cfg.server}/xmltv.php?${q}`, byId: true }];
+    // O guia do provedor passa pelo Worker, que nao diz data nem tamanho: confere a cada 6h.
+    const sources = [...EPG_SOURCES, { name: 'provedor', family: 'provedor', url: `${Data.cfg.server}/xmltv.php?${q}`, byId: true, every: 6 * 3600000 }];
     for (const src of sources) {
       const old = this.srcData[src.name] || (this.srcData[src.name] = await native.cacheGet(`epg-src:${src.name}`).catch(() => null));
       const age = Date.now() - (old?.at || 0);
@@ -680,26 +520,35 @@ const Live = {
     this.choose(list, sources, chSig);
   },
 
-  /** Baixa uma fonte e separa a grade de cada canal da lista. */
-  async readSource(src, list) {
-    let xml = await fetchXml(src.url);
-    if (!xml) return {};
-    const names = xmltvNames(xml);
-    const want = new Map();
-    const twins = new Map();
-    for (const ch of list) twins.set(epgKey(ch.name), (twins.get(epgKey(ch.name)) || 0) + 1);
-    for (const ch of list) {
-      const ids = (src.byId ? ch.variants.map((v) => v.epg) : epgAliases(ch.name).map((k) => names.get(k))).filter((id) => id && sameKind(ch.name, names.labels.get(id), twins.get(epgKey(ch.name)) > 1));
-      if (ids.length) want.set(ch.key, [...new Set(ids)]);
+  /**
+   * Baixa uma fonte e separa a grade de cada canal da lista. Roda no
+   * epg-worker.js: ler ~15 MB de XML na linha principal travava a tela da TV
+   * por varios segundos. Sem worker, le aqui mesmo.
+   */
+  readSource(src, list) {
+    const chans = list.map((ch) => ({ key: ch.key, name: ch.name, epg: ch.variants.map((v) => v.epg) }));
+    if (typeof Worker === 'undefined' || this.noWorker) return readXmltv(src, chans);
+    try {
+      this.worker ||= new Worker('epg-worker.js');
+    } catch {
+      this.noWorker = true;
+      return readXmltv(src, chans);
     }
-    const progs = xmltvProgs(xml, new Set([...want.values()].flat()));
-    xml = null;
-    const by = {};
-    for (const [key, ids] of want) {
-      const rows = ids.map((id) => progs.get(id)).find((r) => r?.length);
-      if (rows) by[key] = rows;
-    }
-    return by;
+    const id = (this.jobId = (this.jobId || 0) + 1);
+    return new Promise((ok, bad) => {
+      const onMsg = (e) => {
+        if (e.data?.id !== id) return;
+        this.worker.removeEventListener('message', onMsg);
+        e.data.error ? bad(new Error(e.data.error)) : ok(e.data.by);
+      };
+      this.worker.addEventListener('message', onMsg);
+      this.worker.postMessage({ id, src, list: chans });
+    }).catch((err) => {
+      // O worker nao conseguiu (ex.: a TV bloqueou a rede nele): le aqui, como antes.
+      console.warn('Programacao: worker falhou, lendo direto', src.name, err);
+      this.noWorker = true;
+      return readXmltv(src, chans);
+    });
   },
 
   /** Para cada canal, a fonte que as outras confirmam agora. */
@@ -1003,6 +852,12 @@ const Live = {
     let last = 0;
     const refresh = (minGap = 0) => {
       if (!Data.ready || !Data.cfg.server || Date.now() - last < minGap) return;
+      // Filme ou serie tocando: a rede e a TV ficam para o video; tenta de novo daqui a 10 min.
+      if (Player.open_ && Player.session?.kind !== 'live') {
+        clearTimeout(this.epgRetry);
+        this.epgRetry = setTimeout(() => refresh(), 10 * 60000);
+        return;
+      }
       last = Date.now();
       this.loading ||= this.loadAll().finally(() => (this.loading = null));
     };
@@ -1028,13 +883,18 @@ const Live = {
     const wait = setInterval(() => {
       if (!Data.ready || !Data.cfg.server) return;
       clearInterval(wait);
-      refresh();
+      // A grade guardada entra na hora; baixar e conferir as fontes fica para
+      // depois que a tela inicial ja abriu.
+      if (!this.allEpg) native.cacheGet('epg-guide').then((c) => c?.by && !this.allEpg && this.useAll(c)).catch(() => {});
+      setTimeout(() => refresh(), 45000);
       setInterval(() => refresh(), 3600000);
     }, 1000);
     // A lista do servidor chegou diferente da guardada: confere se a grade precisa ser refeita.
     const apply = Data.apply.bind(Data);
     Data.apply = (raw) => {
       apply(raw);
+      // A copia salva aplicada na abertura nao conta: so uma publicacao nova refaz a grade.
+      if (!last) return;
       if (this.loading) this.loading.then(() => refresh());
       else refresh();
     };

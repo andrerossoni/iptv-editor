@@ -193,6 +193,8 @@ const App = {
       return;
     }
     if (!Data.cfg.server) this.go('settings', { error: 'Informe o servidor da sua lista para começar.' }, true);
+    // A TV deixa o app aberto por dias: ao voltar para ele, confere se o editor publicou de novo.
+    document.addEventListener('visibilitychange', () => document.hidden || Player.open_ || Data.recheck());
   },
 
   /** Em alta nos streamings: entra assim que chegar, sem atrapalhar quem ja esta rolando a tela. */
@@ -859,6 +861,7 @@ const App = {
             toast('Atualizando…');
             try {
               const raw = await Data.fetchAll();
+              raw.pub = Data.pub = await Data.published();
               Data.apply(raw);
               native.cacheSet('catalog', raw);
               toast(`Pronto: ${Data.items.movie.length} filmes, ${Data.items.series.length} séries, ${Data.items.live.length} canais.`);

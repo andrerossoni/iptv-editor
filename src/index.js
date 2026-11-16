@@ -179,6 +179,8 @@ const STREAM_ACTIONS = {
   get_series: 'series',
 };
 
+const EPG_ACTIONS = new Set(['get_short_epg', 'get_simple_data_table']);
+
 /** Detalhes vem do provedor; so o nome recebe o seu override, se houver. */
 async function serveDetails(env, url, path, kind, idParam) {
   if (modoM3u(env)) return detailsM3u(env, url, kind, idParam);
@@ -238,6 +240,12 @@ async function handlePlayerApi(env, url) {
     return serveBlob(env, key, 'application/json;charset=UTF-8', '[]');
   }
 
+  // Versao da lista publicada: o app so baixa o catalogo inteiro quando ela muda.
+  if (action === 'get_publish_info') {
+    const meta = await env.IPTV.get('pub:meta', { type: 'json', cacheTtl: 60 });
+    return json({ generatedAt: meta?.generatedAt || null });
+  }
+
   if (action === 'get_series_info') {
     return serveDetails(env, url, '/player_api.php', 'series', 'series_id');
   }
@@ -248,8 +256,11 @@ async function handlePlayerApi(env, url) {
   // Lista M3U nao tem guia por canal; o guia vem do xmltv (url-tvg da lista).
   if (modoM3u(env)) return json(action === 'get_short_epg' || action === 'get_simple_data_table' ? { epg_listings: [] } : []);
 
-  // get_short_epg, get_simple_data_table e o que mais o player pedir.
-  return passthrough(env, '/player_api.php', url);
+  // Guia por canal vem do provedor. Qualquer outra acao fica sem resposta: o
+  // provedor responde acao desconhecida com o user_info dele, que traz o
+  // usuario e a senha reais.
+  if (EPG_ACTIONS.has(action)) return passthrough(env, '/player_api.php', url);
+  return json([]);
 }
 
 /* ------------------------------------------------------------- M3U (get.php) */
