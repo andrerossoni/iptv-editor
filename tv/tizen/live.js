@@ -154,9 +154,9 @@ const Antenna = {
       }
     };
     // Janela da antena ja aberta (troca de um canal aberto para outro): so sintoniza.
-    if (this.shown) return go();
+    if (this.shown) return this.toTv(go);
     try {
-      tizen.tvwindow.show(
+      this.toTv(() => tizen.tvwindow.show(
         () => {
           this.shown = true;
           go();
@@ -166,9 +166,37 @@ const Antenna = {
         'MAIN',
         // Atras da pagina: os controles, a grade e a lista de canais ficam por cima da imagem.
         'BEHIND'
-      );
+      ));
     } catch (e) {
       cb.error(e);
+    }
+  },
+
+  /**
+   * A janela mostra a entrada atual da TV. Se ela ficou no HDMI (videogame,
+   * TV box), mostrar a janela liga o aparelho pelo cabo (HDMI-CEC) e a sintonia
+   * nao acha sinal. Passa a entrada para a antena antes de mostrar.
+   */
+  toTv(done) {
+    let called = false;
+    const next = () => called || ((called = true), done());
+    try {
+      if (tizen.tvwindow.getSource('MAIN')?.type === 'TV') return next();
+      tizen.systeminfo.getPropertyValue(
+        'VIDEOSOURCE',
+        (vs) => {
+          const tv = [...(vs.connected || []), ...(vs.disconnected || [])].find((x) => x.type === 'TV');
+          if (!tv) return next();
+          try {
+            tizen.tvwindow.setSource(tv, next, next, 'MAIN');
+          } catch {
+            next();
+          }
+        },
+        next
+      );
+    } catch {
+      next();
     }
   },
 
