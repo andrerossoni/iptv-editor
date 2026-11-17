@@ -880,6 +880,8 @@ const Live = {
 
   init() {
     Antenna.load();
+    // Busca de canais refeita na TV (ex.: canal novo): relê a lista ao voltar para o app.
+    document.addEventListener('visibilitychange', () => document.hidden || Antenna.load());
     // Programacao em segundo plano, assim que a lista de canais chegar; depois
     // confere as fontes de hora em hora, ao voltar da espera e quando a lista muda.
     let last = 0;
