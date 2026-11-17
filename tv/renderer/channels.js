@@ -103,6 +103,51 @@ const Channels = {
     return 2;
   },
 
+  /**
+   * O servidor tirou ou trocou canais: apaga as anotacoes de versoes que
+   * sumiram, e o historico de um canal que voltou com outro codigo (mesmo
+   * nome) passa para o novo. O que sumiu de vez sai do historico.
+   */
+  cleanup() {
+    const live = Data.items.live || [];
+    if (live.length < 20) return; // lista incompleta: melhor nao mexer
+    const ids = new Set(live.map((v) => String(v.id)));
+    const prune = (stats) => Object.keys(stats).filter((id) => !ids.has(String(id))).forEach((id) => delete stats[id]);
+    prune(this.stats);
+    const tv = typeof Live !== 'undefined' ? Live : null;
+    if (tv) prune(tv.stats);
+    store.set('live-stats', tv ? tv.stats : this.stats);
+
+    this.build();
+    const byBase = new Map(this.list.map((ch) => [this.baseKey(ch.name), ch]));
+    let changed = false;
+    const seen = new Set();
+    const hist = [];
+    for (const h of Watch.history) {
+      let x = h;
+      if (String(h.key).startsWith('live:')) {
+        const item = Data.byKey.get(h.key);
+        if (item) {
+          if (!h.name) x = { ...h, name: item.name };
+        } else {
+          const ch = h.name && byBase.get(this.baseKey(h.name));
+          Watch.gone[h.key] = Math.max(Watch.gone[h.key] || 0, h.t);
+          x = ch ? { ...h, key: ch.variants[0].key } : null;
+        }
+        if (x !== h) changed = true;
+      }
+      if (x && !seen.has(x.key)) {
+        seen.add(x.key);
+        hist.push(x);
+      } else if (x) changed = true;
+    }
+    if (!changed) return;
+    Watch.history = hist;
+    store.set('history', hist);
+    store.set('history-gone', Watch.gone);
+    Sync.soon();
+  },
+
   ranked(ch) {
     return ch.variants.slice().sort((a, b) => this.tier(a) - this.tier(b));
   },
