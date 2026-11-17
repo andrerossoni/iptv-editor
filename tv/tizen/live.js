@@ -101,8 +101,8 @@ function pickSource(cands, chName) {
 
 /**
  * Canais abertos pela antena da propria TV: abrem na hora, sem internet e sem
- * gastar conexao do provedor. A antena entra como a primeira versao do canal;
- * sem sinal, o canal segue pelo IPTV.
+ * gastar conexao do provedor. Canal que a antena pega toca so por ela, sem
+ * versao do servidor.
  *
  * Canais com o mesmo nome na antena e na lista ligam sozinhos. As afiliadas
  * regionais (nome diferente) ficam aqui: canal da lista -> nome na antena.
@@ -146,15 +146,20 @@ const Antenna = {
 
   /** Mostra a imagem da antena em tela cheia, atras do app, e sintoniza. cb: { ok, nosignal, error } */
   tune(a, cb) {
+    const go = () => {
+      try {
+        tizen.tvchannel.tune({ major: a.major, minor: a.minor }, { onsuccess: cb.ok, onnosignal: cb.nosignal, onprograminforeceived: () => {} }, cb.error, 'MAIN');
+      } catch (e) {
+        cb.error(e);
+      }
+    };
+    // Janela da antena ja aberta (troca de um canal aberto para outro): so sintoniza.
+    if (this.shown) return go();
     try {
       tizen.tvwindow.show(
         () => {
           this.shown = true;
-          try {
-            tizen.tvchannel.tune({ major: a.major, minor: a.minor }, { onsuccess: cb.ok, onnosignal: cb.nosignal, onprograminforeceived: () => {} }, cb.error, 'MAIN');
-          } catch (e) {
-            cb.error(e);
-          }
+          go();
         },
         cb.error,
         ['0px', '0px', '1920px', '1080px'],
@@ -265,8 +270,8 @@ const Live = {
     this.closeOverlays();
     if (this.cur) clearTimeout(this.cur.up);
     const a = Antenna.find(ch);
-    const order = this.ranked(ch);
-    if (a) order.unshift({ id: `antena-${a.major}.${a.minor}`, name: 'Antena', antenna: a, key: ch.variants[0].key });
+    // Canal aberto que a antena pega: so a antena, sem gastar conexao do provedor.
+    const order = a ? [{ id: `antena-${a.major}.${a.minor}`, name: 'Antena', antenna: a, key: ch.variants[0].key }] : this.ranked(ch);
     this.cur = { ch, order, i: 0, cycle: 0 };
     Watch.touch(ch.variants[0]);
     this.openVariant();
